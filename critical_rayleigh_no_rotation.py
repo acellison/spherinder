@@ -6,6 +6,7 @@ from scipy.linalg import eig
 from mpi4py import MPI
 import time
 import boussinesq
+from eigtools import track_eigenpair
 
 
 def build_ball(L_max, N_max):
@@ -84,41 +85,6 @@ def compute_eigenvalues(M, L, ell_range=None):
         print("Eigenvalues took {:g} sec".format(evals_end-evals_start))
 
     return evals, evecs
-
-
-def track_eigenpair(A, B, lam, v, tol=1e-14, maxiter=10):
-    n = np.prod(np.shape(v))
-    v = np.reshape(np.asmatrix(v), (n,1))
-    A = A.todense()
-    B = B.todense()
-
-    timeit = False
-    if timeit:
-        evals_start = time.time()
-
-    for i in range(maxiter):
-        M00 = A - lam * B
-        M01 = - B @ v
-        M10 = v.H
-        M11 = np.asmatrix([0])
-
-        r0 = -(A - lam * B) @ v
-        r1 = -0.5 * (v.H @ v - 1)
-
-        M = np.bmat([[M00, M01], [M10, M11]])
-        r = np.bmat([[r0],[r1]])
-        delta = np.linalg.solve(M, r)
-        v = v + delta[:len(delta)-1,0]
-        lam = lam + delta[-1,0]
-
-        if np.linalg.norm(delta) <= tol:
-            break
-
-    if timeit:
-        evals_end = time.time()
-        print("Newton eigenvalues took {:g} sec".format(evals_end-evals_start))
-
-    return lam, np.reshape(np.asarray(v),n)
 
 
 def compute_critical_rayleigh(B, ell):

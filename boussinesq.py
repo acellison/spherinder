@@ -9,10 +9,10 @@ def BC_rows(N):
     N2 = N + N1 + 1
     N3 = N + N2 + 1
     N4 = N + N3 + 1
-    return N0,N1,N2,N4
+    return N0,N1,N2,N3,N4
 
 
-def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,implicit_base_temp=True, divtau=False):
+def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,implicit_base_temp=True,unscaled=False):
 
     def D(mu,i,deg):
         if mu == +1: return B.op('D+',N,i,ell+deg)
@@ -29,11 +29,7 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
 
     Z = B.op('0',N,0,ell)
 
-    N0 = N
-    N1 = N + N0 + 1
-    N2 = N + N1 + 1
-    N3 = N + N2 + 1
-    N4 = N + N3 + 1
+    N0, N1, N2, N3, N4 = BC_rows(N)
 
     if ell == 0:
         I = B.op('I',N,0,ell).tocsr()
@@ -135,7 +131,6 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
     QSp = Q[:,2::3].dot(rD[2::3])
     u0m = B.op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
     u0p = B.op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
-    N0, N1, N2, N4 = BC_rows(N)
 
     row0=np.concatenate(( QSm[1]+QSm[3], QS0[1]+QS0[3] , QSp[1]+QSp[3], np.zeros(N4-N2)))
     row1=np.concatenate(( u0m          , np.zeros(N0+1), u0p          , np.zeros(N4-N2)))
@@ -157,13 +152,6 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
     col2 = np.concatenate((np.zeros((N1+1,1)),tau2,np.zeros((N4-N2,1))))
     col3 = np.concatenate((np.zeros((N3+1,1)),tau3))
 
-    if divtau:
-        # Tau line in divergence equation
-        col1 = col2
-        tau1 = ball128.connection(N, ell + 0, 0, 1)[:, -1]  # divtau alpha = 0
-        tau1 = tau1.reshape((len(tau1), 1))
-        col2 = np.concatenate((np.zeros((N2+1,1)),tau1,np.zeros((N4-N3,1))))
-
     L = sparse.bmat([[   L, col0, col1, col2, col3],
                      [row0,    0 ,   0,    0,    0],
                      [row1,    0 ,   0,    0,    0],
@@ -180,6 +168,37 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
     M = M.tocsr()
 
     return M, L
+
+
+def rescale_system(ell, L, M, Ekman, Prandtl, Rayleigh, inplace=False):
+    ntau = 1 if ell == 0 else 4
+    N = (np.shape(L)[0]-ntau)//5
+
+    if not inplace:
+        L = sparse.csr_matrix.copy(L)
+        M = sparse.csr_matrix.copy(M)
+
+    # Ekman scalings
+    M[   :  N,   :  N] *= Ekman     # du^-/dt
+    M[  N:2*N,  N:2*N] *= Ekman     # du^0/dt
+    M[2*N:3*N,2*N:3*N] *= Ekman     # du^+/dt
+
+    L[   :  N,   :  N] *= Ekman     # Lap(u)^-
+    L[  N:2*N,  N:2*N] *= Ekman     # Lap(u)^0
+    L[2*N:3*N,2*N:3*N] *= Ekman     # Lap(u)^+
+
+    # Prandtl scalings
+    M[4*N:5*N,4*N:5*N] *= Prandtl   # dT/dt
+
+    L[4*N:5*N,4*N:5*N] *= Prandtl   # Lap(T)
+    L[4*N:5*N,   :  N] *= Prandtl   # (u.r)^-
+    L[4*N:5*N,2*N:3*N] *= Prandtl   # (u.r)^+
+
+    # Rayleigh scalings
+    L[:N,     4*N:5*N] *= Rayleigh  # (T r)^-
+    L[2*N:3*N,4*N:5*N] *= Rayleigh  # (T r)^+
+
+    return L, M
 
 
 def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):

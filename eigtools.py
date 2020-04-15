@@ -75,51 +75,46 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
     return vals, vecs
 
 
-def track_eigenpair_homotopy(A, B, C, lam, v, alphak=None, tol=1e-14, maxiter=10):
-    """Solve the perturbed eigenproblem (A + C) v = lambda B v
+def track_eigenpair(A, B, lam, v, tol=1e-14, maxiter=10, verbose=False, profile=False):
+    """Find a generalized eigenpair given initial guess (lam, v)
     """
-    n = np.prod(np.shape(v))
+    shape = np.shape(v)
+    n = np.prod(shape)
     v = np.reshape(np.asmatrix(v), (n,1))
 
     # Normalize the initial guess
     v /= np.linalg.norm(v)
 
-    if alphak is None:
-        alphak = [1.]
-
-    timeit = True
-    if timeit:
+    if profile:
         evals_start = time.time()
 
-    for k in range(len(alphak)):
-        print('  Homotopy, alpha_k = {}'.format(alphak[k]))
-        alpha = alphak[k]
-        for i in range(maxiter):
-            M00 = A + alpha*C - lam * B
-            M01 = - B @ v
-            M10 = v.H
-            M11 = np.zeros((1,1))
+    for i in range(maxiter):
+        M00 = A - lam * B
+        M01 = - B @ v
+        M10 = v.H
+        M11 = np.zeros((1,1))
 
-            r0 = (A + alpha*C - lam * B) @ v
-            r1 = 0.5 * (v.H @ v - 1)
+        r0 = M00 @ v
+        r1 = 0.5 * (v.H @ v - 1)
 
-            M = sparse.bmat([[M00, M01], [M10, M11]], format='csr')
-            r = sparse.bmat([[r0],[r1]]).todense()
+        M = sparse.bmat([[M00, M01], [M10, M11]], format='csr')
+        r = sparse.bmat([[r0],[r1]]).todense()
 
-            # Sparse solve
-            delta = sparse.linalg.spsolve(M, -r)
-            dv = np.reshape(delta[:len(delta)-1], np.shape(v))
-            dlam = delta[-1]
+        # Sparse solve
+        delta = sparse.linalg.spsolve(M, -r)
 
-            v += dv
-            lam += dlam
+        v[:,0] += np.asmatrix(delta).T[:n,0]
+        lam += delta[n]
 
-            print('    alpha: {:1.4f},  iter: {:3d},  delta norm: {:1.6e}'.format(alpha, i, np.linalg.norm(delta)))
-            if np.linalg.norm(delta) <= tol:
-                break
+        resid = np.linalg.norm(A @ v - lam * B @ v)/n
+        if verbose:
+            print('    Newton Iteration: {:3d},  residual norm: {:1.6e}'.format(i+1, resid))
+        if resid <= tol:
+            break
 
-    if timeit:
+    if profile:
         evals_end = time.time()
-        print("Newton eigenvalues took {:g} sec".format(evals_end-evals_start))
+        print('  Newton eigenvalues took {:g} sec'.format(evals_end-evals_start))
 
-    return lam, np.reshape(np.asarray(v),n)
+    return lam, np.reshape(v, shape)
+
