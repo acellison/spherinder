@@ -145,7 +145,7 @@ def plotmeridionalquiver(ux, uz, r, theta, phi, angle=0., cmap=None):
     plot_axes.axis([-2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
 
 
-def plotequatorialslice(field, r, theta, phi):
+def plotequatorialslice(field, r, theta, phi, cmap=None):
     # find the two nearest theta values to the equator
     angle = np.pi/2
     inds = np.argpartition(abs(theta.ravel()-angle), 2)[:2]
@@ -171,7 +171,11 @@ def plotequatorialslice(field, r, theta, phi):
     num = 1
     fig, plot_axes, cbar_axes = create_axes(num)
 
-    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap='RdBu')
+    if cmap is None:
+        cmap = 'RdBu'
+    cmap = plt.get_cmap(cmap)
+    cmap.set_bad(color='grey', alpha=.5)
+    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
     plot_axes.plot((1 + eps / 2) * np.sin(phi), (1 + eps / 2) * np.cos(phi), color='k', linewidth=1)
     plot_axes.set_axis_off()
     plot_axes.axis([-1 - 2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
@@ -180,7 +184,7 @@ def plotequatorialslice(field, r, theta, phi):
     cbar.ax.tick_params(labelsize=8)
 
 
-def plotmeridionalslice(field, r, theta, phi, angle=0., cmap=None):
+def plotmeridionalslice(field, r, theta, phi, angle=0., stretch=False, cmap=None):
     num = 1
     fig, plot_axes, cbar_axes = create_axes(num)
     eps = 0.02
@@ -205,10 +209,25 @@ def plotmeridionalslice(field, r, theta, phi, angle=0., cmap=None):
 
     x = r * np.sin(theta)
     y = r * np.cos(theta)
+    if stretch:
+        y /= np.sqrt(1 - x**2)
+        y = np.where(np.isnan(y), 0, y)
 
-    if cmap is None: cmap = 'RdBu'
+    if cmap is None:
+        cmap = 'RdBu'
+    cmap = plt.get_cmap(cmap)
+    cmap.set_bad(color='grey', alpha=.5)
     c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
-    plot_axes.plot((1 + eps / 2) * np.sin(theta), (1 + eps / 2) * np.cos(theta), color='k', linewidth=1)
+
+    if stretch:
+        lw = 1.5
+        a = 1 + eps / 2
+        plot_axes.plot([-a,a], [a,a], color='k', linewidth=lw)
+        plot_axes.plot([a,a], [a,-a], color='k', linewidth=lw)
+        plot_axes.plot([a,-a], [-a,-a], color='k', linewidth=lw)
+        plot_axes.plot([-a,-a], [-a,a], color='k', linewidth=lw)
+    else:
+        plot_axes.plot((1 + eps / 2) * np.sin(theta), (1 + eps / 2) * np.cos(theta), color='k', linewidth=1)
 
     plot_axes.set_axis_off()
     plot_axes.axis([-1 - 2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])

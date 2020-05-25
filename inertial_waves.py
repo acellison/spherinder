@@ -227,7 +227,7 @@ def inertial_waves(B, m, domain):
     plt.xlim([-2.1,2.1])
     plt.ylim([-1,1])
     plt.grid(True)
-    # filename = 'figures/inertial_wave_eigenvalues-m={}-Lmax={}'.format(m, B.L_max)
+    # filename = 'figures/inertial_waves/inertial_wave_eigenvalues-m={}-Lmax={}'.format(m, B.L_max)
     # savefig(filename + '.eps')
 
     targets = {}  # Greenspan targets, final index == m
@@ -266,7 +266,7 @@ def inertial_waves(B, m, domain):
 
         plotmeridionalquiver(ux, uz, r, theta, phi)
         plt.title('Mode {}'.format(index))
-        filename = 'figures/inertial_wave-mode={}-quiver.png'.format(modestr)
+        filename = 'figures/inertial_waves/inertial_wave-mode={}-quiver.png'.format(modestr)
         savefig(filename)
 
         # plotmeridionalquiver(uy, uz, r, theta, phi)
@@ -280,7 +280,7 @@ def inertial_waves(B, m, domain):
         u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
         ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
 
-        filename = lambda field, sl: 'figures/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
+        filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
 
         # Plot
         if m > 0:

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import time
 import boussinesq
 from state_vector import StateVector
-from eigtools import scipy_sparse_eigs, track_eigenpair, eigsort
+from eigtools import scipy_sparse_eigs, track_eigenpair, discard_spurious_eigenvalues
 from plot_tools import plotequatorialslice, plotmeridionalslice, dealias, sph2cart
 
 
@@ -115,11 +115,155 @@ def build_matrices(B, m, L, M, C, Ekman, Prandtl, Rayleigh):
     return Amat, Bmat
 
 
-def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh, bracket_scale=1.1,
-                       newton_tol=1e-9, bisect_tol=1e-3, max_newton_iters=12, max_bisect_iters=12):
+def plot_spectral_decay(u, p, T, B, m, Ekman, Rayleigh, save_plots):
+    filename = lambda field: 'figures/boussinesq-coeffs-m={}-Lmax={}-Nmax={}-Ekman={:1.4e}-Rayleigh={:1.9e}-kind={}'\
+            .format(m, B.L_max, B.N_max, Ekman, Rayleigh,  field)
+
+    if save_plots:
+        def savefig(fn): plt.savefig(fn + '.png')
+    else:
+        def savefig(_): pass
+
+    plt.figure()
+    Tradial = []
+    for ell in range(m, B.L_max + 1):
+        Tradial.append(np.array([np.abs(T['c'][ell][n, m]) for n in range(np.shape(T['c'][ell])[0])]))
+    factor = 1 / np.max(Tradial[0])
+    for i in range(len(Tradial)):
+        Tradial[i] *= factor
+    for i in range(len(Tradial)):
+        plt.semilogy(Tradial[i])
+    plt.grid(True)
+    plt.title('Magnitude of radial coefficients for each harmonic degree')
+    plt.xlabel('Radial degree')
+    savefig(filename('radial'))
+
+    def plot_radial_norm(field, rank=0, a=0):
+        Tell = []
+        ell_range = range(m, B.L_max + 1)
+
+        for ell in ell_range:
+            nsize = np.shape(field['c'][ell])[0]
+            n1 = a * (nsize // 3 ** rank)
+            n2 = (a + 1) * (nsize // 3 ** rank)
+            Tell.append(np.linalg.norm(field['c'][ell][n1:n2, m]))
+        Tell = np.array(Tell)
+        Tell /= max(Tell)
+        plt.semilogy(ell_range, Tell)
+        plt.grid(True)
+        plt.title('Norm of radial coefficients for each harmonic degree')
+        plt.xlabel('Harmonic degree l')
+
+    # plt.figure()
+    # plot_radial_norm(u, rank=1, a=0)
+    # plot_radial_norm(u, rank=1, a=1)
+    # plot_radial_norm(u, rank=1, a=2)
+    # savefig(filename('ell'))
+
+    plt.figure()
+    plot_radial_norm(T)
+    savefig(filename('ell'))
+
+    # plt.figure()
+    # plot_radial_norm(p)
+    # savefig(filename('ell'))
+
+
+def plot_fields(u, p, T, B, m, domain, Ekman, Rayleigh, save_plots, plot_resolution, plot_dpi):
+    if save_plots:
+        def savefig(fn): plt.savefig(fn + '.png', dpi=plot_dpi)
+    else:
+        def savefig(_): pass
+
+    # Dealias for plotting
+    L_factor, N_factor = max(plot_resolution // (B.L_max + 1), 1), max(plot_resolution // (B.N_max + 1), 1)
+
+    filename = lambda field, sl: 'figures/stretch/boussinesq-m={}-Lmax={}-Nmax={}-field={}-slice={}-Ekman={:1.6e}-Rayleigh={:1.6e}'.format(
+        m, B.L_max, B.N_max, field, sl, Ekman, Rayleigh)
+
+    # Plot settings
+    angle = 0.
+    stretch = True
+
+    # Compute the vorticity
+    om = ball.TensorField_3D(1, B, domain)
+    om.layout = 'c'
+    for ell in range(m, B.L_max + 1):
+        B.curl(ell, 1, u['c'][ell], om['c'][ell])
+
+    # Dealias the fields
+    T, _, _, _ = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
+    T = T['g'][0]
+    u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
+    ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
+
+    # Dealias the vorticity field
+    om, _, _, _ = dealias(B, domain, om, L_factor=L_factor, N_factor=N_factor)
+    omz = om['g'][0] * np.cos(theta) - om['g'][1] * np.sin(theta)
+
+    # plotequatorialslice(uphi, r, theta, phi)
+    # plt.title('Equatorial Slice, $u_ϕ$')
+    # savefig(filename('uphi', 'e'))
+
+    # plotmeridionalslice(ur, r, theta, phi, angle=angle, stretch=stretch)
+    # plt.title('Meridional Slice, $u_r$')
+    # savefig(filename('ur', 'm'))
+
+    plotmeridionalslice(uphi, r, theta, phi, angle=angle, stretch=stretch)
+    plt.title('Meridional Slice, $u_ϕ$')
+    savefig(filename('uphi', 'm'))
+
+    plotmeridionalslice(omz, r, theta, phi, angle=angle, stretch=stretch)
+    plt.title('Meridional Slice, $ω_z$')
+    savefig(filename('omz', 'm'))
+
+    plotmeridionalslice(T, r, theta, phi, angle=angle, stretch=stretch)
+    plt.title('Meridional Slice, $T$')
+    savefig(filename('T', 'm'))
+
+    # Normalized kinetic energy
+    ke = np.log10(0.5 * (u['g'][0] ** 2 + u['g'][1] ** 2 + u['g'][2] ** 2))
+    ke -= np.max(ke)
+    truncate_level = -8
+    ketrunc = np.where(ke < truncate_level, np.nan, ke)
+
+    # plotequatorialslice(ketrunc, r, theta, phi, cmap='RdBu_r')
+    # plt.title('Equatorial Slice, $log_{10}$(Kinetic Energy), Truncated')
+    # savefig(filename('ke', 'e'))
+
+    plotmeridionalslice(ketrunc, r, theta, phi, angle=angle, stretch=stretch, cmap='RdBu_r')
+    plt.title('Meridional Slice, $log_{10}$(Kinetic Energy), Truncated')
+    savefig(filename('ke', 'm'))
+
+
+def rayleigh_bisection(B, m, state_vector, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh, bracket_scale=1.1,
+                       newton_tol=1e-9, bisect_tol=1e-3, max_newton_iters=12, max_bisect_iters=12, verbose=False):
+    if max_bisect_iters == 0:
+        return lam, v, Rayleigh
+
+    utilize_symmetry = False
+
+    if utilize_symmetry:
+        matsolver = 'LSQR_solve'
+        extract_symmetry = lambda a: extract_symmetric_parts(a.tocsc(), B, m, state_vector)
+    else:
+        matsolver = 'SuperluNaturalSpsolve'
+        extract_symmetry = lambda a: a
+
+    eig = lambda Amat, Bmat, lam, v: track_eigenpair(Amat, Bmat, lam, v, matsolver=matsolver, tol=newton_tol,
+                                                     maxiter=max_newton_iters, verbose=verbose)
+
     # Check current Rayleigh number
+    print('  Building matrices to bracket the critical Rayleigh number...', flush=True)
     Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-    lam, v = track_eigenpair(Amat, Bmat, lam, v, tol=newton_tol, maxiter=max_newton_iters, verbose=False)
+
+    Amat = extract_symmetry(Amat)
+    Bmat = extract_symmetry(Bmat)
+    if utilize_symmetry:
+        v = extract_symmetric_parts(np.reshape(v, (1, state_vector.dof)), B, m, state_vector).T
+
+    print('  Computing initial eigenpair...', flush=True)
+    lam, v = eig(Amat, Bmat, lam, v)
 
     print('  Bracketing critical Rayleigh number for Ekman = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Ekman, lam), flush=True)
     Ra_min, Ra_max = Rayleigh, Rayleigh
@@ -128,7 +272,10 @@ def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, 
         while lam.real <= 0:
             Rayleigh *= bracket_scale
             Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-            lam, v = track_eigenpair(Amat, Bmat, lam, v, tol=newton_tol, maxiter=max_newton_iters, verbose=False)
+            Amat = extract_symmetry(Amat)
+            Bmat = extract_symmetry(Bmat)
+
+            lam, v = eig(Amat, Bmat, lam, v)
             Ra_min = Ra_max
             Ra_max = Rayleigh
             print('    Rayleigh = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Rayleigh, lam), flush=True)
@@ -136,19 +283,29 @@ def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, 
         while lam.real >= 0:
             Rayleigh /= bracket_scale
             Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-            lam, v = track_eigenpair(Amat, Bmat, lam, v, tol=newton_tol, maxiter=max_newton_iters, verbose=False)
+            Amat = extract_symmetry(Amat)
+            Bmat = extract_symmetry(Bmat)
+
+            lam, v = eig(Amat, Bmat, lam, v)
             Ra_max = Ra_min
             Ra_min = Rayleigh
             print('    Rayleigh = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Rayleigh, lam), flush=True)
 
+    print('  Bisection brackets for critical Rayleigh number: {}'.format((Ra_min,Ra_max)), flush=True)
     iter, done = 0, False
     while not done:
-        # Build the matrices for the updated Rayleigh number
+        iter += 1
         Rayleigh = 0.5 * (Ra_min + Ra_max)
+
+        # Build the matrices for the updated Rayleigh number
+        print('  Bisection Iteration: {:3d},  Building matrices for Rayleigh = {:1.9e}'.format(iter, Rayleigh), flush=True)
         Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
+        Amat = extract_symmetry(Amat)
+        Bmat = extract_symmetry(Bmat)
 
         # Track the eigenpair as Rayleigh changed
-        lam, v = track_eigenpair(Amat, Bmat, lam, v, tol=newton_tol, maxiter=max_newton_iters, verbose=False)
+        print('    Tracking eigenpair...', flush=True)
+        lam, v = eig(Amat, Bmat, lam, v)
 
         # Update the bisection brackets
         if np.real(lam) > 0:
@@ -156,31 +313,75 @@ def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, 
         else:
             Ra_min = Rayleigh
 
-        iter += 1
-        print('  Bisection Iteration: {:3d},  Ekman: {:1.5e},  Rayleigh number: {:1.5e},  λ = {: 1.9e}'.format(iter,
-                                                                                                               Ekman,
-                                                                                                               Rayleigh,
-                                                                                                               lam),
-              flush=True)
-        done = np.abs(np.real(lam)) <= bisect_tol or iter > max_bisect_iters
+        print('    Ekman: {:1.5e},  Rayleigh number: {:1.9e},  λ = {: 1.9e}'.format(iter, Ekman, Rayleigh, lam), flush=True)
+        done = np.abs(np.real(lam)) <= bisect_tol or iter >= max_bisect_iters
 
+    if utilize_symmetry:
+        v = restore_asymmetric_parts(v, B, m, state_vector)
+    v = np.reshape(np.asarray(v.ravel()), np.prod(np.shape(v)))
     return lam, v, Rayleigh
 
 
-def compute_critical_rayleigh(B, m, domain):
+def get_symmetric_indices(B, m, state_vector):
+    columns = []
+    for ell in range(m, B.L_max+1):
+        first = state_vector.index('u', ell, 0, m)
+        usize = state_vector.index('p', ell, 0, m) - first
+        taustart = state_vector.index('tau', ell, 0, m)
+
+        if (ell - m) % 2 == 0:
+            # Even ell - take everything but the u0 component
+            index1 = first
+            index2 = first + usize//3
+            columns += list(range(index1, index2))
+
+            index1 = first + 2*usize//3
+            index2 = taustart
+            columns += list(range(index1, index2))
+
+            # Tau error in u-, u+ and T components
+            if ell > 0:
+                columns += [index2, index2+2, index2+3]
+            else:
+                columns += [index2]
+        else:
+            # Odd ell - take only the u0 component
+            index1 = first +   usize//3
+            index2 = first + 2*usize//3
+            columns += list(range(index1, index2))
+
+            # Tau error in the u0 component
+            if ell > 0:
+                columns += [taustart+1]
+    return columns
+
+
+def extract_symmetric_parts(A, B, m, state_vector):
+    columns = get_symmetric_indices(B, m, state_vector)
+    return A[:, columns]
+
+
+def restore_asymmetric_parts(v, B, m, state_vector):
+    indices = get_symmetric_indices(B, m, state_vector)
+    vout = np.zeros((state_vector.dof, 1), dtype=v.dtype)
+    vout[indices, 0] = v
+    return vout
+
+
+def compute_critical_rayleigh(B, m, domain, nev=10, evalue_only=False):
     print('Computing Critical Rayleigh Number', flush=True)
     print('  Boussinesq ball dimensions: m = {}, L_max = {}, N_max = {}'.format(m, B.L_max, B.N_max), flush=True)
 
-    plotevec = True
+    plot_evec = True
+    plot_coeff_decay = False
     save_plots = True
-    plot_resolution = 512
-    plot_dpi = 900
+    plot_resolution = 256
+    plot_dpi = 600
 
     # Jones + Marti cases
     critical_pairs = {9: (1e9, 4.761e6, 4.428e2), 14: (1e10, 2.105e7, 9.849e2), 20: (1e11, 9.466e7, 2.124e3),
                       24: (3e11, 1.947e8, 3.073e3), 30: (1e12, 4.302e8, 4.638e3), 95: (1e15, 4.1742e10, 4.6827e4),
-                      # 139: (1e16, 1.9281e11, 1.00675e5)}
-                      139: (1e16, 1.92802e11, 1.004e5)}
+                      139: (1e16, 1.92691e11, 1e5)}
     Ta, Ra, omega = critical_pairs[m]
     Ekman = 1/Ta**0.5
     Prandtl = 1
@@ -190,16 +391,14 @@ def compute_critical_rayleigh(B, m, domain):
     # Ekman_range = Ekman*np.logspace(0,-2,21)
     Ekman_range = [Ekman]
 
-    bisect_tol = 1e-2
+    # lamtarget = 1e3 - 1j*omega
+    lamtarget = -1j*omega
+    verbose = True
+    bisect_tol = 1e-4
     newton_tol = 1e-10
-    max_newton_iters = 12
-    max_bisect_iters = 24
-    lamtarget = 1e3 - 1j*omega
-
-    if save_plots:
-        def savefig(fn): plt.savefig(fn + '.png', dpi=plot_dpi)
-    else:
-        def savefig(_): pass
+    max_newton_iters = 5
+    max_bisect_iters = 0
+    check_critical_rayleigh = True
 
     print('  Constructing the full system, m = {}, Ekman = {}, Rayleigh = {}...'.format(m, Ekman, Rayleigh), flush=True)
     ntau = lambda ell: 1 if ell == 0 else 4
@@ -218,42 +417,48 @@ def compute_critical_rayleigh(B, m, domain):
     print('    Complete system construction took {:g} sec'.format(time_end-time_start), flush=True)
 
     print('  Solving sparse eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]), flush=True)
-    lam, v = scipy_sparse_eigs(Amat, Bmat, N=1, target=lamtarget, profile=True)
-    lam = lam[0]
+    lam, v = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
 
+    print('  Computed Eigenvalues:')
+    for i in range(len(lam)):
+        print('    evalue = {: 1.9e}'.format(lam[i]))
+    print('  Eigenvalue with maximum real part = {: 1.9e}'.format(lam[-1]), flush=True)
+
+    if evalue_only:
+        return lam
+
+    lam = lam[-1]
+    v = v[:,-1]
     Rayleigh_critical = []
     omega_critical = []
 
-    """
     # Track the eigenpair to find the critical rayleigh number
     for i in range(len(Ekman_range)):
         Ekman = Ekman_range[i]
 
-        lam, v, Rayleigh = rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh,
-                                              bracket_scale=1.02, newton_tol=newton_tol, bisect_tol=bisect_tol,
-                                              max_newton_iters=max_newton_iters, max_bisect_iters=max_bisect_iters)
+        lam, v, Rayleigh = rayleigh_bisection(B, m, state_vector, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh,
+                                              bracket_scale=1.01, newton_tol=newton_tol, bisect_tol=bisect_tol,
+                                              max_newton_iters=max_newton_iters, max_bisect_iters=max_bisect_iters,
+                                              verbose=verbose)
 
-        check = False
-        if check:
+        if check_critical_rayleigh and max_bisect_iters > 0:
             Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-            lam2, v2 = scipy_sparse_eigs(Amat, Bmat, N=4, target=lamtarget, profile=True)
-            print(lam2)
+            lam2, v2 = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
             lam2 = lam2[-1]
             error = np.abs(lam-lam2)
+            print('  Error in Newton eigenvalue vs. scipy solve: {}'.format(error))
             if error > 1e-1:
                 raise ValueError('Eigenvalue fell off the rails: mine: {:1.5e}, scipy: {:1.5e}, error: {:1.5e}'.format(lam, lam2, error))
 
-        print('  Critical Rayleigh number for system [m = {}, Ekman = {:1.5e}] = {},  Reduced Rayleigh = {:1.5e},  ω = {:1.5e}'.format(m, Ekman, Rayleigh/Ekman, Rayleigh, -lam.imag), flush=True)
+        print('  Critical Rayleigh number for system [m = {}, Ekman = {:1.5e}] = {},  Reduced Rayleigh = {:1.9e},  ω = {:1.5e}'.format(m, Ekman, Rayleigh/Ekman, Rayleigh, -lam.imag), flush=True)
         Rayleigh_critical.append(Rayleigh/Ekman)
         omega_critical.append(lam.imag)
 
-    print(Ekman_range)
-    print(Rayleigh_critical)
     for i in range(len(Ekman_range)):
-        print('Ekman: {:1.5e}, Rayleigh: {:1.5e}, omega: {:1.5e}'.format(Ekman_range[i], Rayleigh_critical[i], omega_critical[i]))
-    """
+        print('Ekman: {:1.5e}, Rayleigh: {:1.9e}, omega: {:1.5e}'.format(Ekman_range[i], Rayleigh_critical[i], omega_critical[i]))
 
-    if plotevec:
+    u, p, T = None, None, None
+    if plot_coeff_decay or plot_evec:
         eval = lam
         evec = v
 
@@ -264,90 +469,52 @@ def compute_critical_rayleigh(B, m, domain):
         T = ball.TensorField_3D(0, B, domain)
         state_vector.unpack(evec, [u, p, T])
 
-        plt.figure()
-        for ell in range(m, B.L_max+1):
-            Tv = [np.abs(T['c'][ell][n, m]) for n in range(np.shape(T['c'][ell])[0])]
-            plt.semilogy(Tv)
-        plt.grid(True)
-        plt.xlabel('Radial degree')
+    if plot_coeff_decay:
+        plot_spectral_decay(u, p, T, B, m, Ekman, Rayleigh, save_plots)
 
-        plt.figure()
-        Tv = []
-        ell_range = range(m, B.L_max+1)
-        for ell in ell_range:
-            Tv.append(np.linalg.norm(T['c'][ell][:, m]))
-        plt.semilogy(ell_range, Tv)
-        plt.grid(True)
-        plt.xlabel('Harmonic degree l')
+    if plot_evec:
+        plot_fields(u, p, T, B, m, domain, Ekman, Rayleigh, save_plots, plot_resolution, plot_dpi)
 
-        # Dealias for plotting
-        L_factor, N_factor = max(plot_resolution // (B.L_max + 1), 1), max(plot_resolution // (B.N_max + 1), 1)
 
-        filename = lambda field, sl: 'figures/boussinesq-m={}-Lmax={}-Nmax={}-field={}-slice={}-Ekman={:1.4e}-Rayleigh={:1.4e}'.format(m, B.L_max, B.N_max, field, sl, Ekman, Rayleigh)
+def investigate_spuriosity():
+    m = 139
+    cutoff = 1e6
+    nev = 10
 
-        # Plot
-        angle = 0.
+    # resolutions = [(15,15), (23,23), (31,31), (47,47), (63,63)]
+    resolutions = [(351,301), (401,301), (401,351), (451,351), (451,401), (501,401), (501,451)]
+    evalues = []
+    for i in range(len(resolutions)):
+        L_max, N_max = resolutions[i][0], resolutions[i][1]
+        B, domain = build_ball(L_max=L_max, N_max=N_max)
+        lam = compute_critical_rayleigh(B, m, domain, nev=nev, evalue_only=True)
+        evalues.append(lam)
 
-        u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-        ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
-        ux, uy, uz = sph2cart(u, theta, phi)
-
-        plotequatorialslice(ur, r, theta, phi)
-        plt.title('Equatorial Slice, $u_r$')
-        savefig(filename('ur', 'e'))
-
-        plotequatorialslice(utheta, r, theta, phi)
-        plt.title('Equatorial Slice, $u_Θ$')
-        savefig(filename('utheta', 'e'))
-
-        plotequatorialslice(uphi, r, theta, phi)
-        plt.title('Equatorial Slice, $u_ϕ$')
-        savefig(filename('uphi', 'e'))
-
-        plotequatorialslice(ux, r, theta, phi)
-        plt.title('Equatorial Slice, $u_x$')
-        savefig(filename('ux', 'e'))
-
-        plotequatorialslice(ux, r, theta, phi)
-        plt.title('Equatorial Slice, $u_y$')
-        savefig(filename('uy', 'e'))
-
-        plotmeridionalslice(ur, r, theta, phi, angle=angle)
-        plt.title('Meridional Slice, $u_r$')
-        savefig(filename('ur', 'm'))
-
-        plotmeridionalslice(utheta, r, theta, phi, angle=angle)
-        plt.title('Meridional Slice, $u_Θ$')
-        savefig(filename('utheta', 'm'))
-
-        plotmeridionalslice(uphi, r, theta, phi, angle=angle)
-        plt.title('Meridional Slice, $u_ϕ$')
-        savefig(filename('uphi', 'm'))
-
-        plotmeridionalslice(ux, r, theta, phi, angle=angle)
-        plt.title('Meridional Slice, $u_x$')
-        savefig(filename('ux', 'm'))
-
-        plotmeridionalslice(uz, r, theta, phi, angle=angle)
-        plt.title('Meridional Slice, $u_z$')
-        savefig(filename('uz', 'm'))
-
-    return Rayleigh, lam, v
+    for i in range(len(resolutions)-1):
+        lores = evalues[i]
+        hires = evalues[-1]
+        good = discard_spurious_eigenvalues(lores, hires, cutoff, plot=True)
+        print("Number of good eigenvalues for resolution {}: {}/{}".format(resolutions[i], len(good), len(lores)))
+        print(good)
+    plt.show()
 
 
 def main():
     import warnings
     warnings.simplefilter("ignore")
 
-    # Create the domain
-    mcritical = [9, 14, 20, 24, 30, 95, 139]
-    m = mcritical[6]
-    L_max, N_max = 401, 301
-    B, domain = build_ball(L_max=L_max, N_max=N_max)
-    Rayleigh, lam, v = compute_critical_rayleigh(B, m, domain)
+    resolution = {9:(31,31), 14:(47,47), 20:(63,63), 24:(79,79),
+                  30:(121,83), 95:(295,201), 139:(351,301)}
+
+    mvals = [9, 14, 30, 95]
+    for m in mvals:
+        L_max, N_max = resolution[m]
+        B, domain = build_ball(L_max=L_max, N_max=N_max)
+        compute_critical_rayleigh(B, m, domain)
+
     plt.show()
 
 
 if __name__=='__main__':
     main()
-
+    # investigate_spuriosity()
