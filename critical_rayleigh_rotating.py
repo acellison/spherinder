@@ -510,21 +510,29 @@ def compute_eigensolutions():
     plt.show()
 
 
-def analyze_radial_field(r, theta, phi, field, Ekman, doplot, fieldname, npeaks=5, peak_level=10**-8):
-    fit_kind = 'envelope'        # one of ['lsq', 'peak', 'envelope']
-    envelope_kind = 'peak'      # one of ['peak', 'analytic']
-
-    r, theta, phi = r.flatten(), theta.flatten(), phi.flatten()
-    Nr, Ntheta, Nphi = len(r), len(theta), len(phi)
-
-    # Extract phi=0 part of field
+def extract_radial_slice(field):
+    Ntheta = np.shape(field)[1]
     signal = field[0,:,:]
-
-    # Extract theta=pi/2 part of field
     if Ntheta % 2 == 1:
         signal = 0.5*(signal[Ntheta//2-1,:] + signal[Ntheta//2,:])
     else:
         signal = signal[Ntheta//2,:]
+    return signal
+
+
+def count_zero_crossings(a):
+    return np.where(np.diff(np.sign([i for i in a if i])))[0].shape[0]
+
+
+def analyze_radial_field(r, theta, phi, field, Ekman, fieldname, doplot=True, npeaks=5, peak_level=10**-8, plotonly=False):
+    fit_kind = 'envelope'        # one of ['lsq', 'peak', 'envelope']
+    envelope_kind = 'peak'      # one of ['peak', 'analytic']
+
+    r, theta, phi = r.flatten(), theta.flatten(), phi.flatten()
+    Nr = len(r)
+
+    # Extract the phi=0, theta=pi/2 radial slice
+    signal = extract_radial_slice(field)
 
     # Normalize so the peak points up
     if np.max(signal) < -np.min(signal):
@@ -538,6 +546,22 @@ def analyze_radial_field(r, theta, phi, field, Ekman, doplot, fieldname, npeaks=
     peak_start, peak_end = r[index_peak_start], r[index_peak_end]
     peak_width = peak_end - peak_start
     peak_midpoint = (peak_start + peak_end)/2
+
+    # Plot
+    ekstr = '$10^{{{}}}$'.format(np.around(np.log10(Ekman), 1))
+    if plotonly:
+        fig, ax = plt.subplots()
+        ax.plot(r, signal)
+        ax.set_xlabel('s')
+        ax.set_ylabel(fieldname)
+        ax.set_title('{},  Ekman = {}'.format(fieldname, ekstr))
+        ax.grid()
+        fig.set_tight_layout(True)
+
+        outputdir = os.path.join(os.path.dirname(__file__), 'figures')
+        filename = os.path.join(outputdir, 'boussinesq_radial_slice-Ekman={:1.3e}-field={}.png'.format(Ekman, fieldname))
+        plt.savefig(filename, dpi=200)
+        return
 
     # Compute the polynomial or envelope fit
     if fit_kind == 'peak' or fit_kind == 'lsq':
@@ -555,8 +579,11 @@ def analyze_radial_field(r, theta, phi, field, Ekman, doplot, fieldname, npeaks=
     else:
         raise ValueError('Unknown fit_kind')
 
+    peak_indices, _ = ss.find_peaks(signal[index_peak_start:index_peak_end+1])
+    npeaks = len(peak_indices)
     print('Ekman = {:1.3e},  Field = {},  Peak Location: s = {:1.6f},  Peak Width: s = {:1.6e},  Peak Midpoint: {:1.4f},'
-          .format(Ekman, fieldname, peak_location, peak_width, peak_midpoint))
+          '  Num Peaks: {}'
+          .format(Ekman, fieldname, peak_location, peak_width, peak_midpoint, npeaks))
 
     if doplot:
         fig, plot_axes = plt.subplots()
@@ -565,7 +592,6 @@ def analyze_radial_field(r, theta, phi, field, Ekman, doplot, fieldname, npeaks=
         plot_axes.plot(peak_location, peak_height, 'x', color='k')
         plot_axes.grid()
 
-        ekstr = '$10^{{{}}}$'.format(np.around(np.log10(Ekman),1))
         plot_axes.set_title('log({}),  Ekman = {}'.format(fieldname, ekstr))
         plot_axes.set_xlabel('s')
         plot_axes.set_ylabel('log({})'.format(fieldname))
@@ -582,13 +608,13 @@ def analyze_radial_field(r, theta, phi, field, Ekman, doplot, fieldname, npeaks=
         plt.savefig(filename, dpi=200)
 
     result = {'location': peak_location, 'width': peak_width, 'midpoint': peak_midpoint,
-              'start': peak_start, 'end': peak_end}
+              'start': peak_start, 'end': peak_end, 'npeaks': npeaks}
     return result
 
 
 def analyze_eigensolutions():
-    doplot = True
     resolution = 256
+    peak_level = 10 ** -3
 
     datadir = os.path.join(os.path.dirname(__file__), 'data')
     datafiles = glob.glob(datadir+"/*.pckl")
@@ -601,7 +627,7 @@ def analyze_eigensolutions():
     alldata = alldata[indices]
 
     # Process each data
-    Ekmans, peak_locations, peak_widths, peak_midpoints = [], [], [], []
+    Ekmans, peak_locations, peak_widths, peak_midpoints, peak_counts = [], [], [], [], []
     for data in alldata:
         config = data['config']
         m, L_max, N_max, Ekman, Rayleigh = config['m'], config['Lmax'], config['Nmax'], config['Ekman'], config['Rayleigh']
@@ -620,6 +646,11 @@ def analyze_eigensolutions():
         T = ball.TensorField_3D(0, B, domain)
         state_vector.unpack(evec, [u, p, T])
 
+        # Plot the temperature field
+        L_factor, N_factor = 1, np.ceil(resolution / (B.N_max + 1))
+        T, r, theta, phi = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
+        analyze_radial_field(r, theta, phi, T['g'][0], Ekman, fieldname='T', peak_level=peak_level, plotonly=True)
+
         # Dealias and compute kinetic energy
         L_factor, N_factor = 1, np.ceil(resolution / (B.N_max + 1))
         u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
@@ -627,20 +658,46 @@ def analyze_eigensolutions():
 
         # Find peak location and width for the signal
         npeaks = 5
-        result = analyze_radial_field(r, theta, phi, ke, Ekman, doplot, fieldname='KE',
-                                      npeaks=npeaks, peak_level=10**-3)
+        result = analyze_radial_field(r, theta, phi, ke, Ekman, fieldname='KE', doplot=True,
+                                      npeaks=npeaks, peak_level=peak_level)
 
         peak_locations.append(result['location'])
         peak_widths.append(result['width'])
         peak_midpoints.append(result['midpoint'])
+        peak_counts.append(result['npeaks'])
+
+    ratios = np.zeros(len(alldata))
+    for i in range(len(alldata)):
+        m = alldata[i]['config']['m']
+        mscale = 2*np.pi/m * peak_locations[i]
+        sscale = peak_widths[i]/(peak_counts[i]/2)
+        ratios[i] = mscale/sscale
+
+    plot_azimuth_to_radius = True
+    if not plot_azimuth_to_radius:
+        ratios = 1/ratios
+
+    fig, plot_axes = plt.subplots()
+    plot_axes.semilogx(Ekmans, ratios, '--x')
+    plot_axes.set_xlabel('Ekman')
+    plot_axes.set_ylabel('Ratio')
+    if plot_azimuth_to_radius:
+        plot_axes.set_title('Azimuthal to Radial Scale Length Ratio')
+    else:
+        plot_axes.set_title('Radial to Azimuthal Scale Length Ratio')
+    plot_axes.grid()
+    fig.set_tight_layout(True)
+    outputdir = os.path.join(os.path.dirname(__file__), 'figures')
+    filename = os.path.join(outputdir, 'boussinesq_radial_vs_azimuthal_scaling.png')
+    plt.savefig(filename)
 
     fig, plot_axes = plt.subplots(1,2, figsize=(9,4))
-    plot_axes[0].semilogx(Ekmans, peak_locations, 'x', label='estimate')
-    plot_axes[0].semilogx(Ekmans, peak_midpoints, 'x', label='midpoint')
+    plot_axes[0].semilogx(Ekmans, peak_locations, '--x', label='estimate')
+    plot_axes[0].semilogx(Ekmans, peak_midpoints, '--x', label='midpoint')
     plot_axes[0].set_title('Peak Location')
     plot_axes[0].legend()
 
-    plot_axes[1].semilogx(Ekmans, peak_widths, 'x', label='KE')
+    plot_axes[1].semilogx(Ekmans, peak_widths, '--x', label='KE')
     plot_axes[1].set_title('Peak Width')
     for ax in plot_axes:
         ax.set_xlabel('Ekman')
@@ -653,7 +710,7 @@ def analyze_eigensolutions():
 
     fig, plot_axes = plt.subplots()
     sm = 0.5915
-    plot_axes.semilogx(Ekmans, np.array(peak_locations) - sm, 'x', label='KE')
+    plot_axes.semilogx(Ekmans, np.array(peak_locations) - sm, '--x', label='KE')
     plot_axes.set_title('Distance from Peak Location to Jones Solution $s_M = {}$'.format(sm))
     plot_axes.set_xlabel('Ekman')
     plot_axes.set_ylabel('$s_c - s_M$')
