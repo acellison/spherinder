@@ -12,7 +12,7 @@ def BC_rows(N):
     return N0,N1,N2,N3,N4
 
 
-def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,implicit_base_temp=True,unscaled=False):
+def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,implicit_base_temp=True,unscaled=False,boundary_condition='stress-free'):
 
     def D(mu,i,deg):
         if mu == +1: return B.op('D+',N,i,ell+deg)
@@ -132,9 +132,16 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
     u0m = B.op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
     u0p = B.op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
 
-    row0=np.concatenate(( QSm[1]+QSm[3], QS0[1]+QS0[3] , QSp[1]+QSp[3], np.zeros(N4-N2)))
-    row1=np.concatenate(( u0m          , np.zeros(N0+1), u0p          , np.zeros(N4-N2)))
-    row2=np.concatenate(( QSm[5]+QSm[7], QS0[5]+QS0[7] , QSp[5]+QSp[7], np.zeros(N4-N2)))
+    if boundary_condition == 'stress-free':
+        row0=np.concatenate(( QSm[1]+QSm[3], QS0[1]+QS0[3] , QSp[1]+QSp[3], np.zeros(N4-N2)))
+        row1=np.concatenate(( u0m          , np.zeros(N0+1), u0p          , np.zeros(N4-N2)))
+        row2=np.concatenate(( QSm[5]+QSm[7], QS0[5]+QS0[7] , QSp[5]+QSp[7], np.zeros(N4-N2)))
+    elif boundary_condition == 'no-slip':
+        row0 = np.concatenate((                B.op('r=1', N, 0, ell-1), np.zeros(N4-N0)))
+        row1 = np.concatenate((np.zeros(N0+1), B.op('r=1', N, 0, ell),   np.zeros(N4-N1)))
+        row2 = np.concatenate((np.zeros(N1+1), B.op('r=1', N, 0, ell+1), np.zeros(N4-N2)))
+    else:
+        raise ValueError('Unknown boundary condition')
     row3=np.concatenate(( np.zeros(N3+1), B.op('r=1',N,0,ell) ))
 
     tau0 = C(-1)[:,-1]
