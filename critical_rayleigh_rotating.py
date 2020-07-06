@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import time
 import boussinesq
 from state_vector import StateVector
-from eigtools import scipy_sparse_eigs, track_eigenpair, discard_spurious_eigenvalues
+from eigtools import scipy_sparse_eigs, track_eigenpair, eigsort
 from plot_tools import plotmeridionalslice, dealias, sph2cart
 from interpolate import interpolate, envelope, polyfit
 import scipy.signal as ss
@@ -51,11 +51,11 @@ def build_ball(L_max, N_max):
     return B, domain
 
 
-def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC):
+def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundary_condition):
     M, L, E = [], [], []
     for ell in ell_range:
         N = B.N_max - B.N_min(ell-B.R_max)
-        M_ell, L_ell = boussinesq.matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC,implicit_buoyancy=True,implicit_base_temp=True)
+        M_ell, L_ell = boussinesq.matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC,implicit_buoyancy=True,implicit_base_temp=True,boundary_condition=boundary_condition)
         M.append(M_ell.astype(np.complex128))
         L.append(L_ell.astype(np.complex128))
 
@@ -83,11 +83,11 @@ def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC):
     return M, L, E
 
 
-def build_unscaled_matrices(B, state_vector, m, alpha_BC=0):
+def build_unscaled_matrices(B, state_vector, m, alpha_BC, boundary_condition):
     ell_range = range(m, B.L_max+1)
 
     time_start = time.time()
-    M, L, E = build_matrices_ell(B, Ekman=1, Prandtl=1, Rayleigh=1, ell_range=ell_range, alpha_BC=alpha_BC)
+    M, L, E = build_matrices_ell(B, Ekman=1, Prandtl=1, Rayleigh=1, ell_range=ell_range, alpha_BC=alpha_BC, boundary_condition=boundary_condition)
     time_end = time.time()
     print('    Non-rotating matrix construction took {:g} sec'.format(time_end-time_start), flush=True)
 
@@ -363,27 +363,25 @@ def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, 
     return lam, v, Rayleigh
 
 
-def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False):
+def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False, boundary_condition='stress-free',
+                              thermal_forcing_factor=1.0):
     print('Computing Critical Rayleigh Number', flush=True)
     print('  Boussinesq ball dimensions: m = {}, L_max = {}, N_max = {}'.format(m, B.L_max, B.N_max), flush=True)
 
-    plot_evec = False
+    plot_evec = True
     plot_coeff_decay = False
     save_plots = False
-    save_evec = True
+    save_evec = False
     plot_resolution = 256
     plot_dpi = 600
 
     # Get reduced nondimensional parameters from config
     Ekman, Rayleigh, omega = config['Ekman'], config['Rayleigh'], config['omega']
 
-    # Rescale from reduced parameters to true parameters
-    Rayleigh /= Ekman**(4/3)
+    # Rescale parameters
     omega /= Ekman**(2/3)
-
-    # Marti and Jones use Ekman*Rayleigh for buoyancy term
     Prandtl = 1
-    Rayleigh = Ekman * Rayleigh
+    Rayleigh = thermal_forcing_factor * Rayleigh / Ekman**(1/3)
     alpha_BC = 2
 
     # Ekman_range = Ekman*np.logspace(0,-2,21)
@@ -403,7 +401,7 @@ def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False):
     state_vector = StateVector(B, 'mlr', fields, ntau=ntau, m_min=m, m_max=m)
 
     time_start = time.time()
-    Lunscaled, Munscaled, Cor = build_unscaled_matrices(B, state_vector, m, alpha_BC)
+    Lunscaled, Munscaled, Cor = build_unscaled_matrices(B, state_vector, m, alpha_BC, boundary_condition)
 
     t1 = time.time()
     Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
@@ -414,11 +412,18 @@ def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False):
     print('    Complete system construction took {:g} sec'.format(time_end-time_start), flush=True)
 
     print('  Solving sparse eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]), flush=True)
-    lam, v = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
+    if nev == 'all':
+        lam, v = eigsort(Amat.todense(), Bmat.todense(), profile=True)
+    else:
+        lam, v = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
 
-    print('  Computed Eigenvalues:')
-    for i in range(len(lam)):
-        print('    evalue = {: 1.9e}'.format(lam[i]))
+    if nev == 'all':
+        plt.plot(lam.real, lam.imag, '.')
+        plt.show()
+    else:
+        print('  Computed Eigenvalues:')
+        for i in range(len(lam)):
+            print('    evalue = {: 1.9e}'.format(lam[i]))
     print('  Eigenvalue with maximum real part = {: 1.9e}'.format(lam[-1]), flush=True)
 
     if evalue_only:
@@ -456,7 +461,7 @@ def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False):
 
     if save_evec:
         basepath = os.path.dirname(__file__)
-        evec_filename = os.path.join(basepath, 'data/boussinesq-evec-Ekman={:1.3e}.pckl'.format(Ekman))
+        evec_filename = os.path.join(basepath, 'data/boussinesq-evec-Ekman={:1.3e}-bc={}.pckl'.format(Ekman, boundary_condition))
         data = {'config': config, 'evalue': lam, 'evector': v}
         with open(evec_filename, 'wb') as f:
             pickle.dump(data, f)
@@ -488,24 +493,29 @@ def compute_eigensolutions():
     import warnings
     warnings.simplefilter("ignore")
 
-    configs = [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 31,  'Nmax': 31},
-               {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 31,  'Nmax': 31},
-               {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 47,  'Nmax': 47},
-               {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 91,  'Nmax': 63},
-               {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 121, 'Nmax': 83},
-               {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 151, 'Nmax': 101},
-               {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 231, 'Nmax': 171},
-               {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 295, 'Nmax': 201}]
+    configs = [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 32,  'Nmax': 31},
+               {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 32,  'Nmax': 31},
+               {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 48,  'Nmax': 47},
+               {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 92,  'Nmax': 63},
+               {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 122, 'Nmax': 83},
+               {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 152, 'Nmax': 101},
+               {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
+               {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201}]
 
+    boundary_condition = 'no-slip'
+    # boundary_condition = 'stress-free'
+    # nev = 10
+    nev = 'all'
+    thermal_forcing_factor = 1
+
+    # configs = [configs[-2]]
     configs = [configs[1]]
     for config in configs:
         m = config['m']
         L_max, N_max = config['Lmax'], config['Nmax']
-        if L_max % 2 == 1:
-            L_max += 1
-            config['Lmax'] = L_max
         B, domain = build_ball(L_max=L_max, N_max=N_max)
-        compute_critical_rayleigh(B, m, domain, config, nev=1)
+        compute_critical_rayleigh(B, m, domain, config, nev=nev, boundary_condition=boundary_condition,
+                                  thermal_forcing_factor=thermal_forcing_factor)
 
     plt.show()
 
@@ -725,5 +735,5 @@ def analyze_eigensolutions():
 
 
 if __name__=='__main__':
-    # compute_eigensolutions()
-    analyze_eigensolutions()
+    compute_eigensolutions()
+    # analyze_eigensolutions()
