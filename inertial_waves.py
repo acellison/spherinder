@@ -232,15 +232,28 @@ def inertial_waves(B, m, domain):
 
     targets = {}  # Greenspan targets, final index == m
     targets[(2,1,1)] = 1
-    targets[(4,1,0)] = 1.309
-    targets[(4,1,1)] = 0.820
+    targets[(4,1,1)] = -0.820
     targets[(4,2,1)] = 1.708
     targets[(4,3,1)] = 0.612
+    targets[(6,1,1)] = -1.404217
+    targets[(6,2,1)] = -0.537334
+    targets[(8,1,1)] = -1.644733
+    targets[(8,2,1)] = -1.094069
+    targets[(8,3,1)] = -0.400086
+    targets[(10,1,1)] = -1.764983
+    targets[(10,2,1)] = -1.389747
+    targets[(10,3,1)] = -0.893074
+    targets[(10,4,1)] = -0.318776
+    targets[(4,1,0)] = 1.309
     targets[(6,1,0)] = 0.938
     targets[(6,2,0)] = 1.660
     targets[(8,1,0)] = 0.726
     targets[(8,2,0)] = 1.354
     targets[(8,3,0)] = 1.800
+    targets[(10,1,0)] = 0.591516
+    targets[(10,2,0)] = 1.130471
+    targets[(10,3,0)] = 1.568967
+    targets[(10,4,0)] = 1.868003
 
     target_ids = [key for key in targets.keys() if key[2] == m]
     for index in target_ids:
@@ -260,30 +273,27 @@ def inertial_waves(B, m, domain):
         u, r, theta, phi = dealias(B, domain, u, L_factor=5/2, N_factor=5/2)
         ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
 
-        ux = ur * np.sin(theta) * np.cos(phi) + utheta * np.cos(theta) * np.cos(phi) - uphi * np.sin(phi)
-        uy = ur * np.sin(theta) * np.sin(phi) + utheta * np.cos(theta) * np.sin(phi) + uphi * np.cos(phi)
-        uz = ur * np.cos(theta)               - utheta * np.sin(theta)
-
-        plotmeridionalquiver(ux, uz, r, theta, phi)
-        plt.title('Mode {}'.format(index))
-        filename = 'figures/inertial_waves/inertial_wave-mode={}-quiver.png'.format(modestr)
-        savefig(filename)
-
-        # plotmeridionalquiver(uy, uz, r, theta, phi)
-        # plt.title('Meridional, Mode = {}, y-z'.format(index))
-
-        continue
+        # ux = ur * np.sin(theta) * np.cos(phi) + utheta * np.cos(theta) * np.cos(phi) - uphi * np.sin(phi)
+        # uy = ur * np.sin(theta) * np.sin(phi) + utheta * np.cos(theta) * np.sin(phi) + uphi * np.cos(phi)
+        # uz = ur * np.cos(theta)               - utheta * np.sin(theta)
+        #
+        # plotmeridionalquiver(ux, uz, r, theta, phi)
+        # plt.title('Mode {}'.format(index))
+        # filename = 'figures/inertial_waves/inertial_wave-mode={}-quiver.png'.format(modestr)
+        # savefig(filename)
 
         # Dealias for plotting
         res = 256
         L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
+        p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
         u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
         ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
 
         filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
 
         # Plot
-        if m > 0:
+        # if m > 0:
+        if False:
             plotequatorialslice(ur, r, theta, phi)
             plt.title('Greenspan Mode {}, Equatorial Slice, $u_r$'.format(index))
             savefig(filename('ur', 'e'))
@@ -305,6 +315,17 @@ def inertial_waves(B, m, domain):
         plotmeridionalslice(utheta, r, theta, phi, angle=angle)
         plt.title('Greenspan Mode {}, Meridional Slice, $u_Θ$'.format(index))
         savefig(filename('utheta', 'm'))
+
+        plotmeridionalslice(uphi, r, theta, phi, angle=angle)
+        plt.title('Greenspan Mode {}, Meridional Slice, $u_φ$'.format(index))
+        savefig(filename('uphi', 'm'))
+
+        plotmeridionalslice(p['g'][0], r, theta, phi, angle=angle)
+        plt.title('Greenspan Mode {}, Meridional Slice, $p$'.format(index))
+        savefig(filename('p', 'm'))
+
+        if save_plots:
+            plt.close('all')
 
     plt.show()
     return lam, v
