@@ -1,4 +1,5 @@
 import dedalus_sphere.jacobi as Jacobi
+import numpy as np
 
 # Jacobi operators
 A = Jacobi.operator('A')
