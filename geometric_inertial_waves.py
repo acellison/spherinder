@@ -1,239 +1,12 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+import spherinder as sph
 
-from dedalus_sphere import jacobi as Jacobi
 from eigtools import eigsort
 import os
 import pickle
 import greenspan_inertial_waves as greenspan
-
-
-def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0):
-    """Basis function for our fields"""
-    ns, neta = len(s), len(eta)
-    t = 2*s**2 - 1
-
-    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta)[-1,:].reshape(neta,1)
-    Ps = Jacobi.polynomials(Nmax,ell+alpha+beta+1/2,m+sigma,t)
-    tt = t.reshape(1,ns)
-    return [Peta * (1+tt)**((m+sigma)/2) * (1-tt)**(ell/2) * Ps[k,:] for k in range(Nmax)]
-
-
-def expand(basis, coeffs):
-    """Expand the coefficient vector to grid space"""
-    f = np.zeros(np.shape(basis[0][0]), dtype=np.complex128)
-    for ell in range(len(basis)):
-        for k in range(len(basis[ell])):
-            f += coeffs[ell,k] * basis[ell][k]
-    return f
-
-
-def plotfield(s, eta, f, fig=None, ax=None, stretch=False):
-    s, eta = s.ravel(), eta.ravel()
-    ss = np.reshape(s,(1,len(s)))
-    ee = np.reshape(eta,(len(eta),1))
-    zz = np.sqrt(1-ss**2)*ee
-    y = ee if stretch else zz
-    
-    if fig is None or ax is None:
-        fig, ax = plt.subplots(figsize=(4.25,6))
-    im = ax.pcolormesh(ss, y, f, cmap='RdBu')
-    fig.colorbar(im, ax=ax)
-    ax.set_xlabel('s')
-    if stretch:
-        ax.set_ylabel('η')
-    else:
-        ax.set_ylabel('z')
-    ax.set_aspect('equal', adjustable='box')
-    fig.set_tight_layout(True)
-
-
-# Jacobi operators
-A = Jacobi.operator('A')
-B = Jacobi.operator('B')
-C = Jacobi.operator('C')
-D = Jacobi.operator('D')
-Z = Jacobi.operator('Z')
-Id = Jacobi.operator('Id')
-
-# Composite Jacobi operators
-AB = A(+1) @ B(+1)   # a,b -> a+1,b+1
-
-
-def make_operator(zmat, smats, Lmax=None, Nmax=None):
-    """Kronecker out an operator.  Since the radial operators depend on ell,
-       we require a separate operator matrix for each vertical expansion coefficient.
-       FIXME: need to maintain square shapes for our operators"""
-    def pad(mat,n):
-        if np.isscalar(mat):       return mat
-        if np.shape(mat) == (1,1): return mat
-        mat = mat[:n,:]
-        nrows, ncols = np.shape(mat)
-        if nrows < n:
-            print('padding')
-            mat = sparse.vstack([mat, np.zeros((n-nrows, n))])
-        return mat
-
-    Lout, Lin = np.shape(zmat)
-    Nout, Nin = 0, 0
-    for smat in smats:
-        if np.ndim(smat) < 2: continue
-        sh = np.shape(smat)
-        if Nout < sh[0]: Nout = sh[0]
-        if Nin  < sh[1]: Nin  = sh[1]
-
-    if Lmax is not None and Nmax is not None:
-        Lout, Nout = Lmax, Nmax
-        zmat = pad(zmat, Lmax)
-        smats = [pad(smat, Nmax) for smat in smats]
-
-    # Construct the operator matrix
-    op = sparse.lil_matrix((Lout*Nout,Lin*Nin))
-    rows, cols = zmat.nonzero()
-    for row, col in zip(rows, cols):
-        value = zmat[row,col]
-        if not np.isscalar(value):
-            value = value.todense()[0,0]
-        if np.abs(value) < 1e-15:
-            continue
-        smat = smats[col]
-        op[Nout*row:Nout*(row+1),Nin*col:Nin*(col+1)] = value * smat
-    return op
-
-
-def make_conversion_operator(m, Lmax, Nmax, alpha=0):
-    """Convert up in alpha index"""
-    opz = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-    alpha_ell = np.diag(opz)
-    beta_ell = np.diag(opz,2)
-
-    zmat = np.diag(alpha_ell)
-    smats = [A(+1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
-    Op1 = make_operator(zmat, smats, Lmax, Nmax)
-
-    zmat = np.diag(beta_ell,2)
-    smats = [A(-1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
-    Op2 = make_operator(zmat, smats, Lmax, Nmax)
-
-    Op = Op1 + Op2
-    return Op
-
-
-def make_radial_operator(m, Lmax, Nmax, alpha=1, truncate=False):
-    """Extract the spherical radial part of a velocity field"""   
-    N = Nmax if truncate else Nmax+1
-
-    # Coeff space operator: s * u(+)
-    zmat = sparse.eye(Lmax,Lmax,format='lil')
-    smats = [B(-1)(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]                       # (n,a,b) -> (n+1,a,b-1)
-    Opp = 1/2 * make_operator(zmat, smats, Lmax, N)
-
-    # Coeff space operator: s * u(-)
-    zmat = sparse.eye(Lmax,Lmax,format='lil')
-    smats = [B(+1)(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]                       # (n,a,b) -> (n,a,b+1)
-    Opm = 1/2 * make_operator(zmat,smats, Lmax, N)
-
-    # Coeff space operator: z * w = eta * (1-s**2)*0.5 * w
-    opz = Z(Lmax,alpha,alpha).todense()
-
-    zmat = np.diag(np.diag(opz,-1),-1)[:,:Lmax]
-    smats = [A(+1)(Nmax+1,ell-1+alpha+1/2,m)[:,:Nmax] for ell in range(1,Lmax+1)] + [0]  # (n,a,b) -> (n,a+1,b)
-    Opz1 = make_operator(zmat, smats, Lmax, N)
-
-    zmat = np.diag(np.diag(opz,+1),+1)
-    smats = [0] + [A(-1)(Nmax,ell+1+alpha+1/2,m)[:,:Nmax] for ell in range(Lmax-1)]      # (n,a,b) -> (n+1,a-1,b)
-    Opz2 = make_operator(zmat, smats, Lmax, N)
-
-    Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
-
-    return Opp, Opm, Opz
-
-
-def make_gradient_operator(m, Lmax, Nmax, alpha=0):
-    """Compute the gradient of a scalar field"""
-    op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-    alpha_ell = np.diag(op)
-    beta_ell = -np.diag(op,2)
-    
-    # e(+)^* . Grad
-    zmat = np.diag(2*alpha_ell)
-    smats = [D(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Op1 = make_operator(zmat, smats, Lmax, Nmax)
-    zmat = np.diag(2*beta_ell,2)
-    smats = [C(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Op2 = make_operator(zmat, smats, Lmax, Nmax)
-    Opp = Op1 + Op2
-    
-    # e(-)^* . Grad
-    zmat = np.diag(2*alpha_ell)
-    smats = [C(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Op1 = make_operator(zmat, smats, Lmax, Nmax)
-    zmat = np.diag(2*beta_ell,2)
-    smats = [D(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Op2 = make_operator(zmat, smats, Lmax, Nmax)
-    Opm = Op1 + Op2
-
-    # e(z)^* . Grad
-    zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)
-    smats = [Id(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Opz = make_operator(zmat, smats, Lmax, Nmax)
-
-    return Opp, Opm, Opz
-
-
-def make_divergence_operator(m, Lmax, Nmax, alpha=1):
-    """Compute the divergence of a vector field"""
-    op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-    gamma_ell = np.diag(op)
-    delta_ell = -np.diag(op,2)
-   
-    # Div . e(+)^* .
-    zmat = np.diag(2*gamma_ell)
-    smats = [C(+1)(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]
-    Op1 = make_operator(zmat, smats, Lmax, Nmax)
-    zmat = np.diag(2*delta_ell,2)
-    smats = [D(-1)(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]
-    Op2 = make_operator(zmat, smats, Lmax, Nmax)
-    Opp = Op1 + Op2
-
-    # Div . e(-)^* . 
-    zmat = np.diag(2*gamma_ell)
-    smats = [D(+1)(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]
-    Op1 = make_operator(zmat, smats, Lmax, Nmax)
-    zmat = np.diag(2*delta_ell,2)
-    smats = [C(-1)(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]
-    Op2 = make_operator(zmat, smats, Lmax, Nmax)
-    Opm = Op1 + Op2
- 
-    # Div . e(z)^* .
-    zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)
-    smats = [Id(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]
-    Opz = make_operator(zmat, smats, Lmax, Nmax)
-
-    return Opp, Opm, Opz
-
-
-def make_boundary_evaluation_operator(m, Lmax, Nmax, alpha, sigma):
-    """Compute the boundary evaluation operator, split into the even and odd ell indices"""
-    L = Lmax-1
-    even_conversions = [(A(+1)**(L//2-ell) @ A(-1)**ell)(Nmax,2*ell+alpha+1/2,m+sigma) for ell in range(L//2+1)]
-    odd_conversions = [(A(+1)**(((L-1)//2)-ell) @ A(-1)**ell)(Nmax,2*ell+1+alpha+1/2,m+sigma) for ell in range((L+1)//2)]
-
-    bc = Jacobi.polynomials(Lmax,alpha,alpha,1.)
-
-    Opeven = sparse.lil_matrix((Nmax+L//2,Lmax*Nmax))
-    Opodd  = sparse.lil_matrix((Nmax+(L-1)//2,Lmax*Nmax))
-    for ell in range(Lmax):
-        if ell % 2 == 0:
-            op, mat = even_conversions, Opeven
-        else:
-            op, mat = odd_conversions, Opodd        
-        op = bc[ell] * op[ell//2]
-        mat[:np.shape(op)[0],ell*Nmax:(ell+1)*Nmax] = op
-
-    Op = sparse.vstack([Opeven,Opodd])
-    return Op
 
 
 def matrices(m, Lmax, Nmax, boundary_method):
@@ -243,12 +16,13 @@ def matrices(m, Lmax, Nmax, boundary_method):
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
-    Gradp, Gradm, Gradz = make_gradient_operator(m, Lmax, Nmax, alpha=0)
-    Divp, Divm, Divz = make_divergence_operator(m, Lmax, Nmax, alpha=1)
+    Gradp, Gradm, Gradz = sph.gradient(m, Lmax, Nmax, alpha=0)
+    Divp, Divm, Divz = sph.divergence(m, Lmax, Nmax, alpha=1)
 
     truncate_boundary = False
-    Radp, Radm, Radz = make_radial_operator(m, Lmax, Nmax, alpha=1, truncate=truncate_boundary)
-    Boundary = make_boundary_evaluation_operator(m, Lmax, Nmax+int(not truncate_boundary), alpha=1, sigma=0)
+    Ntrunc = Nmax+int(not truncate_boundary)
+    Radp, Radm, Radz = sph.spherical_radial_vector(m, Lmax, Nmax, alpha=1, Ntrunc=Ntrunc)
+    Boundary = sph.boundary_evaluation(m, Lmax, Ntrunc, alpha=1, sigma=0)
     Boundp, Boundm, Boundz = Boundary @ Radp, Boundary @ Radm, Boundary @ Radz
 
     # Time derivative matrices
@@ -372,10 +146,10 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     tau = vec[4*ncoeff:]
     print(tau)
 
-    upbasis = [psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
-    umbasis = [psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
-    u0basis = [psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
-    pbasis  = [psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
+    upbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
+    umbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
+    u0basis = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
+    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
 
     # Get the grid space vector fields
     vec = vec.astype(np.complex128)
@@ -386,10 +160,10 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     pcoeff = vec[3*ncoeff:4*ncoeff]
 
     # Convert to grid space
-    up = expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
-    um = expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
-    w  = expand(u0basis, np.reshape( wcoeff, (Lmax,Nmax)))
-    p  = expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
+    up = sph.expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
+    um = sph.expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
+    w  = sph.expand(u0basis, np.reshape( wcoeff, (Lmax,Nmax)))
+    p  = sph.expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
     u =       np.sqrt(0.5) * (up + um)
     v = -1j * np.sqrt(0.5) * (up - um)
 
@@ -484,7 +258,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plo
         relative_real = np.linalg.norm(np.real(Fgrid))/np.linalg.norm(Fgrid)
         f = Fgrid.real if relative_real > 0.5 else Fgrid.imag
 
-        plotfield(s, eta, f)
+        sph.plotfield(s, eta, f)
         plt.title(r'${}$'.format(field_names[field_index]))
         filename = prefix + '-evector-' + configstr + '-' + modestr + '-' + field_names[field_index] + '.png'
         savefig(filename)
