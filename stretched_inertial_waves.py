@@ -336,7 +336,7 @@ def expand_evectors(Nmax, k, m, Lmax, a, b, boundary_method, vec, s, eta):
 def plot_solution(m, k, Nmax, Lmax, boundary_method, plot_evalues, plot_slices, plot_fields):
     save_plots = True
     plot_field_indices = [3]
-    mode_index = (40,1,30)    
+    mode_index = (4,2,1)
 
     # Load the data
     filename = pickle_filename(m, k, Nmax, Lmax, boundary_method)
@@ -351,7 +351,7 @@ def plot_solution(m, k, Nmax, Lmax, boundary_method, plot_evalues, plot_slices, 
     else:
         def savefig(_): pass
 
-    evalue_target = greenspan.compute_eigenvalues(mode_index[0], mode_index[2])[mode_index[1]-1]
+    evalue_target = 2*greenspan.compute_eigenvalues(mode_index[0], mode_index[2])[mode_index[1]-1]
     modestr = str(mode_index[0]) + str(mode_index[1]) + str(mode_index[2])
     configstr = 'm={}-k={}-Nmax={}-Lmax={}-{}'.format(m,k,Nmax,Lmax,boundary_method)
     prefix = filename_prefix('figures')
@@ -425,11 +425,11 @@ def plot_solution(m, k, Nmax, Lmax, boundary_method, plot_evalues, plot_slices, 
 
 def main():
     solve = False
-    plot_evalues = False
+    plot_evalues = True
     plot_fields = True
     plot_slices = False
 
-    m, k = 30, 0
+    m, k = 1, 0
     Nmax, Lmax = 24, 24
     boundary_method = 'tau'
 
