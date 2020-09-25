@@ -11,19 +11,30 @@ import greenspan_inertial_waves as greenspan
 
 def matrices(m, Lmax, Nmax, boundary_method):
     """Construct matrices for X = [i*u(+), i*u(-), i*w, p]
+       FIXME: artificially truncating gradient, divergence, radial operators
     """
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
-    Gradp, Gradm, Gradz = sph.gradient(m, Lmax, Nmax, alpha=0)
-    Divp, Divm, Divz = sph.divergence(m, Lmax, Nmax, alpha=1)
+    # Scalar gradient operators
+    Gradp, Gradm, Gradz = sph.Gradient()(m, Lmax, Nmax, alpha=0)
+    Gradm = sph.reshape_codomain(Gradm, Lmax, Nmax+1, Lmax, Nmax)
+    Gradz = sph.reshape_codomain(Gradz, Lmax-1, Nmax, Lmax, Nmax)
 
-    truncate_boundary = False
-    Ntrunc = Nmax+int(not truncate_boundary)
-    Radp, Radm, Radz = sph.spherical_radial_vector(m, Lmax, Nmax, alpha=1, Ntrunc=Ntrunc)
-    Boundary = sph.boundary_evaluation(m, Lmax, Ntrunc, alpha=1, sigma=0)
-    Boundp, Boundm, Boundz = Boundary @ Radp, Boundary @ Radm, Boundary @ Radz
+    # Vector divergence operator
+    Div = sph.Divergence()(m, Lmax, Nmax, alpha=1)
+    Div = sph.reshape_codomain(Div, Lmax, Nmax+1, Lmax, Nmax)
+    Divp = Div[:,:ncoeff]
+    Divm = Div[:,ncoeff:2*ncoeff]
+    Divz = Div[:,2*ncoeff:]
+
+    # FIXME: for now we discard the final ell equations of Rad.  This is how the code was
+    # before moving to the OO design.  We will get potentially bad truncation error here as a result
+    Rad = sph.RadialVector()(m, Lmax, Nmax, alpha=1)
+    Rad = sph.reshape_codomain(Rad, Lmax+1, Nmax+1, Lmax, Nmax+1)
+    Boundary = sph.boundary_evaluation(m, Lmax, Nmax+1, alpha=1, sigma=0)
+    Bound = Boundary @ Rad
 
     # Time derivative matrices
     M00 = I
@@ -67,8 +78,8 @@ def matrices(m, Lmax, Nmax, boundary_method):
 
     # Boundary conditions
     def impenetrable(split_parity):
-        ntau = np.shape(Boundp)[0]
-        row = sparse.hstack([Boundp, Boundm, Boundz, sparse.lil_matrix((ntau,ncoeff))])
+        ntau = np.shape(Bound)[0]
+        row = sparse.hstack([Bound, sparse.lil_matrix((ntau,ncoeff))])
 
         # Tau contribution in the final ell coefficients
         whichtau = (2,3)
@@ -176,9 +187,8 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
 
 def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plot_fields):
     save_plots = True
-    plot_field_indices = [2,3,4]
-#    mode_index = (4,2,1)
-    mode_index = (60,29,1)
+    plot_field_indices = [3]
+    mode_index = (20,9,1)
 
     # Load the data
     filename = pickle_filename(m, Lmax, Nmax, boundary_method)
@@ -271,7 +281,7 @@ def main():
     plot_slices = False
 
     m = 1
-    Lmax, Nmax = 10, 32
+    Lmax, Nmax = 16, 16
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))
