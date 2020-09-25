@@ -9,9 +9,20 @@ import pickle
 import greenspan_inertial_waves as greenspan
 
 
+def remove_zero_rows(mat):
+    rows, cols = mat.nonzero()
+    zrows = list(set(range(np.shape(mat)[0])) - set(rows))
+    if not zrows:
+        return mat
+    for z in zrows:
+        i = np.argmax(rows > z)
+        rows[i:] -= 1    
+    return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
+
+
 def matrices(m, Lmax, Nmax, boundary_method):
     """Construct matrices for X = [i*u(+), i*u(-), i*w, p]
-       FIXME: artificially truncating gradient, divergence, radial operators
+       FIXME: artificially truncating gradient and divergence
     """
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
@@ -29,12 +40,11 @@ def matrices(m, Lmax, Nmax, boundary_method):
     Divm = Div[:,ncoeff:2*ncoeff]
     Divz = Div[:,2*ncoeff:]
 
-    # FIXME: for now we discard the final ell equations of Rad.  This is how the code was
-    # before moving to the OO design.  We will get potentially bad truncation error here as a result
+    # Boundary condition
     Rad = sph.RadialVector()(m, Lmax, Nmax, alpha=1)
-    Rad = sph.reshape_codomain(Rad, Lmax+1, Nmax+1, Lmax, Nmax+1)
-    Boundary = sph.boundary_evaluation(m, Lmax, Nmax+1, alpha=1, sigma=0)
+    Boundary = sph.boundary_evaluation(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
     Bound = Boundary @ Rad
+    Bound = remove_zero_rows(Bound)
 
     # Time derivative matrices
     M00 = I
