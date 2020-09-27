@@ -55,9 +55,6 @@ D = Jacobi.operator('D')
 Z = Jacobi.operator('Z')
 Id = Jacobi.operator('Id')
 
-# Composite Jacobi operators
-AB = A(+1) @ B(+1)   # a,b -> a+1,b+1
-
 
 def hstack(*args, **kwargs):
     return sparse.hstack(*args, **kwargs, format='csr')
@@ -92,7 +89,8 @@ def make_operator(zmat, smats, Lmax=None, Nmax=None):
     smats = [pad(smat, Nout) for smat in smats]
 
     # Construct the operator matrix
-    op = sparse.lil_matrix((Lout*Nout,Lin*Nin))
+    dtype = np.float64
+    op = sparse.lil_matrix((Lout*Nout,Lin*Nin), dtype=dtype)
     rows, cols = zmat.nonzero()
     for row, col in zip(rows, cols):
         value = zmat[row,col]
@@ -105,40 +103,103 @@ def make_operator(zmat, smats, Lmax=None, Nmax=None):
     return op
 
 
-class Codomain(operators.Codomain):
-    def __init__(self, dell, dn, dsigma, dalpha):
-        operators.Codomain.__init__(self, *(dell,dn,dsigma,dalpha), Output=Codomain)
+def resize(mat, Lin, Nin, Lout, Nout):
+    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
+       This appends and deletes rows as necessary without touching the columns"""
+    nrows, ncols = np.shape(mat)
+    if not Lin*Nin == nrows:
+        raise ValueError('Incorrect size')
+
+    result = sparse.lil_matrix((Lout*Nout,ncols), dtype=mat.dtype)
+    L, N = min(Lin,Lout), min(Nin,Nout)
+    for ell in range(L):
+        result[ell*Nout:ell*Nout+N,:] = mat[ell*Nin:ell*Nin+N,:]
+    return result        
+
+
+class Codomain():
+    def __init__(self, dell, dn, dalpha):
+        self._arrow = (dell,dn,dalpha)
+
+    @property
+    def arrow(self):
+        return self._arrow
+
+    def __getitem__(self, item):
+        return self._arrow[item]
+
+    def __call__(self,*args):
+        return tuple(a+b for a,b in zip(self.arrow, args))
+
+    def __repr__(self):
+        return str(self)
 
     def __str__(self):
-        s = f'(ell->ell+{self[0]},n->n+{self[1]},σ->σ+{self[2]},α->α+{self[3]})'
+        s = f'(ell->ell+{self[0]},n->n+{self[1]},α->α+{self[2]})'
         return s.replace('+0','').replace('+-','-')
 
     def __eq__(self, other):
+        """Compare the numerical index α"""
         return self[2:] == other[2:]
     
-    def __or__(self, other):
+    def __add__(self, other):
         if self != other:
             raise TypeError('operators have incompatible codomains.')
         return Codomain(*tuple(max(a,b) for a,b in zip(self[:2],other[:2])), *self[2:])
+
+    def __mul__(self, other):
+        return Codomain(*tuple(a+b for a,b in zip(self[:],other[:])))
 
 
 class Operator():
     def __init__(self, codomain):
         self._codomain = codomain
 
-
     @property
     def codomain(self):
         return self._codomain
 
 
-class Conversion(Operator):
-    """Convert up in alpha index"""
+class Boundary(Operator):
+    """Evaluate a field on the ball boundary"""
     def __init__(self):
-        Operator.__init__(self, Codomain(0,+1,0,+1))
+        Operator.__init__(self, codomain=None)
+
+    def codomain(self, m, Lmax, Nmax, alpha, sigma):
+        L = Lmax-1
+        return (Nmax+L//2, L//2+alpha+1/2, m+sigma), (Nmax+(L-1)//2, (L+1)//2+alpha+1/2, m+sigma)
+
+    def __call__(self, m, Lmax, Nmax, alpha, sigma, separate=False):
+        L = Lmax-1
+        even_conversions = [(A(+1)**(L//2-ell) @ A(-1)**ell)(Nmax,2*ell+alpha+1/2,m+sigma) for ell in range(L//2+1)]
+        odd_conversions = [(A(+1)**(((L-1)//2)-ell) @ A(-1)**ell)(Nmax,2*ell+1+alpha+1/2,m+sigma) for ell in range((L+1)//2)]
+
+        bc = Jacobi.polynomials(Lmax,alpha,alpha,1.)
+
+        Opeven = sparse.lil_matrix((Nmax+L//2,Lmax*Nmax))
+        Opodd  = sparse.lil_matrix((Nmax+(L-1)//2,Lmax*Nmax))
+        for ell in range(Lmax):
+            if ell % 2 == 0:
+                op, mat = even_conversions, Opeven
+            else:
+                op, mat = odd_conversions, Opodd
+            op = bc[ell] * op[ell//2]
+            mat[:np.shape(op)[0],ell*Nmax:(ell+1)*Nmax] = op
+
+        if separate:
+            return Opeven, Opodd
+        else:
+            return sparse.vstack([Opeven,Opodd])
 
 
-    def __call__(self, m, Lmax, Nmax, sigma, alpha):
+class Conversion(Operator):
+    """Convert up in alpha index.  This isn't really a tensor operation since it can
+       act independently on components of vectors"""
+    def __init__(self):
+        Operator.__init__(self, codomain=Codomain(0,+1,+1))
+
+
+    def __call__(self, m, Lmax, Nmax, alpha, sigma):
         opz = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()                   # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
         alpha_ell = np.diag(opz)
         beta_ell = np.diag(opz,2)
@@ -158,7 +219,8 @@ class Conversion(Operator):
 class RadialVector(Operator):
     """Extract the spherical radial part of a velocity field"""   
     def __init__(self):
-        Operator.__init__(self, Codomain(+1,+1,0,0))
+        codomain = [Codomain(0,+1,0), Codomain(0,0,0), Codomain(+1,+1,0)]
+        Operator.__init__(self, codomain=codomain)
 
 
     def __call__(self, m, Lmax, Nmax, alpha):
@@ -190,9 +252,8 @@ class RadialVector(Operator):
 class RadialMultiplication(Operator):
     """Multiply a scalar field by the spherical radius vector"""
     def __init__(self):
-        codomains = [Codomain(0,0,+1,0), Codomain(0,+1,-1,0), Codomain(+1,+1,0,0)]
-        conversion = Conversion()
-        Operator.__init__(self, tuple([[conversion.codomain + cd] for cd in codomains]))
+        codomain = [Conversion().codomain * cd for cd in [Codomain(0,0,0), Codomain(0,+1,0), Codomain(+1,+1,0)]]
+        Operator.__init__(self, codomain=codomain)
 
     def __call__(self, m, Lmax, Nmax, alpha):
         # u(+) operator
@@ -219,9 +280,9 @@ class RadialMultiplication(Operator):
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
 
         conversion = Conversion()
-        Cp = conversion(m, Lmax,   Nmax,   sigma=+1, alpha=alpha)
-        Cm = conversion(m, Lmax,   Nmax+1, sigma=-1, alpha=alpha)
-        Cz = conversion(m, Lmax+1, Nmax+1, sigma= 0, alpha=alpha)
+        Cp = conversion(m, Lmax,   Nmax  , alpha=alpha, sigma=+1)
+        Cm = conversion(m, Lmax,   Nmax+1, alpha=alpha, sigma=-1)
+        Cz = conversion(m, Lmax+1, Nmax+1, alpha=alpha, sigma= 0)
 
         return Cp @ Opp, Cm @ Opm, Cz @ Opz
 
@@ -229,7 +290,8 @@ class RadialMultiplication(Operator):
 class Gradient(Operator):
     """Compute the gradient of a scalar field"""
     def __init__(self):
-        Operator.__init__(self, ([Codomain(0,0,+1,+1)], [Codomain(0,+1,-1,+1)], [Codomain(-1,0,0,+1)]))
+        codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(-1,0,+1)]
+        Operator.__init__(self, codomain=codomain)
 
     def __call__(self, m, Lmax, Nmax, alpha):
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
@@ -265,7 +327,8 @@ class Gradient(Operator):
 class Divergence(Operator):
     """Compute the divergence of a vector field"""
     def __init__(self):
-        Operator.__init__(self, Codomain(0,+1,0,+1))
+        codomain = [Codomain(0,+1,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
+        Operator.__init__(self, codomain=codomain)
      
     def __call__(self, m, Lmax, Nmax, alpha):
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()                # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
@@ -301,7 +364,8 @@ class Divergence(Operator):
 class Curl(Operator):
     """Compute the divergence of a vector field"""
     def __init__(self):
-        Operator.__init__(self, (Codomain(0,0,0,+1), Codomain(0,+1,0,+1), Codomain(0,+1,0,+1)))
+        codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(0,+1,+1)]
+        Operator.__init__(self, codomain=codomain)
      
     def __call__(self, m, Lmax, Nmax, alpha):
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()                # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
@@ -309,165 +373,121 @@ class Curl(Operator):
         delta_ell = -np.diag(op,2)
 
         # e(+)^* . Curl
-        zmat = 1j * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)                # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
+        zmat = 1 * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)                # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
         smats = [Id(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]
         Opp_p = make_operator(zmat, smats, Lmax=Lmax)
 
-        zmat = -2j * np.diag(gamma_ell)
+        zmat = -2 * np.diag(gamma_ell)
         smats = [D(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]    # (n,a,b) -> (n-1,a+1,b+1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax)
-        zmat = -2j * np.diag(delta_ell,2)
+        zmat = -2 * np.diag(delta_ell,2)
         smats = [C(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]    # (n,a,b) -> (n,a-1,b+1)
         Op2 = make_operator(zmat, smats)
         Opp_z = Op1 + Op2
 
         # e(-)^* . Curl
-        zmat = -1j * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)               # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
+        zmat = -1 * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)               # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
         smats = [Id(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]
         Opm_m = make_operator(zmat, smats, Lmax=Lmax, Nmax=Nmax+1)
 
-        zmat = 2j * np.diag(gamma_ell)
+        zmat = 2 * np.diag(gamma_ell)
         smats = [C(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]    # (n,a,b) -> (n,a+1,b-1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
-        zmat = 2j * np.diag(delta_ell,2)
+        zmat = 2 * np.diag(delta_ell,2)
         smats = [D(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]    # (n,a,b) -> (n+1,a-1,b-1)
         Op2 = make_operator(zmat, smats)
         Opm_z = Op1 + Op2
 
         # e(z)^* . Curl
-        zmat = -2j * np.diag(gamma_ell)
+        zmat = -2 * np.diag(gamma_ell)
         smats = [C(+1)(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]  # (n,a,b) -> (n,a+1,b-1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
-        zmat = -2j * np.diag(delta_ell,2)
+        zmat = -2 * np.diag(delta_ell,2)
         smats = [D(-1)(Nmax,ell+alpha+1/2,m+1) for ell in range(Lmax)]  # (n,a,b) -> (n+1,a-1,b-1)
         Op2 = make_operator(zmat, smats)
         Opz_p = Op1 + Op2
 
-        zmat = 2j * np.diag(gamma_ell)
+        zmat = 2 * np.diag(gamma_ell)
         smats = [D(+1)(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]  # (n,a,b) -> (n-1,a+1,b+1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
-        zmat = 2j * np.diag(delta_ell,2)
+        zmat = 2 * np.diag(delta_ell,2)
         smats = [C(-1)(Nmax,ell+alpha+1/2,m-1) for ell in range(Lmax)]  # (n,a,b) -> (n,a-1,b+1)
         Op2 = make_operator(zmat, smats, Nmax=Nmax+1)
         Opz_m = Op1 + Op2
 
         Zp, Zm, Zz = 0*Opp_p, 0*Opm_m, 0*Opz_p
-        return hstack([Opp_p, Zp, Opp_z]), hstack([Zm, Opm_m, Opm_z]), hstack([Opz_p, Opz_m, Zz])
+        return 1j*hstack([Opp_p, Zp, Opp_z]), 1j*hstack([Zm, Opm_m, Opm_z]), 1j*hstack([Opz_p, Opz_m, Zz])
 
 
-class Laplacian(Operator):
-    """Compute the Laplacian of a field"""
-    def __init__(self, field='scalar', incompressible=False):
-        if field not in ['scalar', 'vector']:
-            raise ValueError('Unsupported Laplacian field')
-        self._field = field
-        self._incompressible = incompressible
-
-        if field == 'scalar':
-            Operator.__init__(self, Codomain(0,+1,0,+2))
-        else:
-            # FIXME: implement
-            pass
-
-    @property
-    def field(self):
-        return self._field
-
-    @property
-    def incompressible(self):
-        return self._incompressible
+class ScalarLaplacian(Operator):
+    def __init__(self):
+        Operator.__init__(self, codomain=Codomain(0,+1,+2))
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        if self.field == 'scalar':
-            return scalar_operator(m, Lmax, Nmax, alpha)
+        gradp, gradm, gradz = Gradient()(m, Lmax, Nmax, alpha)
+        gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1)
+        gradz = resize(gradz, Lmax-1, Nmax, Lmax, Nmax+1)
+        grad = sparse.vstack([gradp,gradm,gradz])
+        div = Divergence()(m, Lmax, Nmax+1, alpha+1)
+        dg = div @ grad
+        dg = resize(dg, Lmax, Nmax+2, Lmax, Nmax+1)
+        return dg
+
+
+class VectorLaplacian(Operator):
+    def __init__(self):
+        codomain = [Codomain(0,+1,+2), Codomain(0,+1,+2), Codomain(0,+1,+2)]
+        Operator.__init__(self, codomain=codomain)
+
+    def __call__(self, m, Lmax, Nmax, alpha):
+        # Curl(Curl)
+        curlp, curlm, curlz = Curl()(m, Lmax, Nmax, alpha)
+        curlp = resize(curlp, Lmax, Nmax, Lmax, Nmax+1)
+        curl1 = sparse.vstack([curlp,curlm,curlz])
+        curlp, curlm, curlz = Curl()(m, Lmax, Nmax+1, alpha+1)
+        curlp = resize(curlp, Lmax, Nmax+1, Lmax, Nmax+2)
+        curl2 = sparse.vstack([curlp,curlm,curlz])
+        cc = (curl2 @ curl1).real
+
+        # Grad(Div)
+        div = Divergence()(m, Lmax, Nmax, alpha)
+        gradp, gradm, gradz = Gradient()(m, Lmax, Nmax+1, alpha+1)
+        gradp = resize(gradp, Lmax, Nmax+1, Lmax, Nmax+2)
+        gradz = resize(gradz, Lmax-1, Nmax+1, Lmax, Nmax+2)
+        grad = sparse.vstack([gradp,gradm,gradz])
+        gd = grad @ div
+
+        # Vector Laplacian
+        op = gd - cc
+        rows, cols, _ = sparse.find(abs(op) >= 1e-12)
+        values = [op[r,c] for r,c in zip(rows, cols)]
+        op = sparse.csr_matrix((values,(rows,cols)), shape=np.shape(op))
+
+        nin, nout = Lmax*Nmax, Lmax*(Nmax+2)
+        Opp, Opm, Opz = op[:nout,:nin], op[nout:2*nout,nin:2*nin], op[2*nout:,2*nin:]
+        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nmax+1)
+        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nmax+1)
+        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nmax+1)
+        return Opp, Opm, Opz
+
+
+def operator(name, field=None):
+    if name in ['divergence', 'div']:
+        return Divergence()
+    if name in ['gradient', 'grad']:
+        return Gradient()
+    if name == 'curl':
+        return Curl()
+    if name in ['laplacian', 'lap']:
+        if field == 'vector':
+            op = VectorLaplacian()
         else:
-            return vector_operator(m, Lmax, Nmax, alpha)
-
-    def scalar_operator(self, m, Lmax, Nmax, alpha):
-        pass           
-        
-    def scalar_operator(self, m, Lmax, Nmax, alpha):
-        pass
-
-
-def reshape_codomain(mat, Lin, Nin, Lout, Nout):
-    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
-       This appends and deletes rows as necessary without touching the input space (columns)"""
-    nrows, ncols = np.shape(mat)
-    if not Lin*Nin == nrows:
-        raise ValueError('Incorrect size')
-
-    result = sparse.lil_matrix((Lout*Nout,ncols), dtype=mat.dtype)
-    L, N = min(Lin,Lout), min(Nin,Nout)
-    for ell in range(L):
-        result[ell*Nout:ell*Nout+N,:] = mat[ell*Nin:ell*Nin+N,:]
-    return result        
-
-
-def scalar_laplacian(m, Lmax, Nmax, alpha):
-    Grad = make_gradient_operator(m, Lmax, Nmax, alpha, Ntrunc=Nmax+1)
-    Div = make_divergence_operator(m, Lmax, Nmax+1, alpha+1, Ntrunc=Nmax)
-    return Div @ Grad
-
-
-def vector_laplacian(m, Lmax, Nmax, alpha, incompressible=False):
-    Curl1 = make_curl_operator(m, Lmax, Nmax, alpha, Ntrunc=Nmax+1)
-    Curl2 = make_curl_operator(m, Lmax, Nmax+1, alpha+1, Ntrunc=Nmax)
-    Lap = -Curl2 @ Curl1
-    Lap = Lap.real
-
-    if not incompressible:
-        Div = make_divergence_operator(m, Lmax, Nmax, alpha, Ntrunc=Nmax+1)
-        Grad = make_gradient_operator(m, Lmax, Nmax+1, alpha+1, Ntrunc=Nmax)
-        Lap += Grad @ Div
-
-    return Lap
-
-
-def _boundary_evaluation_impl(m, Lmax, Nmax, sigma, alpha, separate=False):
-    """Compute the boundary evaluation operator, split into the even and odd ell indices"""
-    L = Lmax-1
-    even_conversions = [(A(+1)**(L//2-ell) @ A(-1)**ell)(Nmax,2*ell+alpha+1/2,m+sigma) for ell in range(L//2+1)]
-    odd_conversions = [(A(+1)**(((L-1)//2)-ell) @ A(-1)**ell)(Nmax,2*ell+1+alpha+1/2,m+sigma) for ell in range((L+1)//2)]
-
-    bc = Jacobi.polynomials(Lmax,alpha,alpha,1.)
-
-    Opeven = sparse.lil_matrix((Nmax+L//2,Lmax*Nmax))
-    Opodd  = sparse.lil_matrix((Nmax+(L-1)//2,Lmax*Nmax))
-    for ell in range(Lmax):
-        if ell % 2 == 0:
-            op, mat = even_conversions, Opeven
-        else:
-            op, mat = odd_conversions, Opodd        
-        op = bc[ell] * op[ell//2]
-        mat[:np.shape(op)[0],ell*Nmax:(ell+1)*Nmax] = op
-
-    if separate:
-        return Opeven, Opodd
-    else:
-        return sparse.vstack([Opeven,Opodd])
-
-
-def boundary_codomain(m, Lmax, Nmax, sigma, alpha):
-    """Return the codomain after collapsing the eta dependence through
-       boundary evaluation.  Returns a tuple of (even codomain, odd codomain)"""
-    L = Lmax-1
-    return (Nmax+L//2, L//2+alpha+1/2, m+sigma), (Nmax+(L-1)//2, (L+1)//2+alpha+1/2, m+sigma)
-
-
-def boundary_evaluation(m, Lmax, Nmax, sigma, alpha, separate=False):
-    """Create the boundary evaluation operator.  separate returns a 
-       pair of operators, one for even ell indices and one for odd ell indices.
-       Can pass in the list [+1,-1,0] for sigma to form the vector field boundary
-       evaluation operator"""
-    make_op = lambda s: _boundary_evaluation_impl(m, Lmax, Nmax, s, alpha, separate=separate)
-    if np.isscalar(sigma):
-        return make_op(sigma)
-    else:
-        ops = [make_op(s) for s in sigma]
-        if separate:
-            return hstack([op[0] for op in ops]), sparse.hstack([op[1] for op in ops])
-        else:
-            return hstack(ops)
-
+            op = ScalarLaplacian()
+        return op
+    if name == 'rtimes':
+        return RadialMultiplication()
+    if name == 'erdot':
+        return RadialVector()
+    if name == 'boundary':
+        return Boundary()
 

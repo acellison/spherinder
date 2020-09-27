@@ -30,19 +30,19 @@ def matrices(m, Lmax, Nmax, boundary_method):
 
     # Scalar gradient operators
     Gradp, Gradm, Gradz = sph.Gradient()(m, Lmax, Nmax, alpha=0)
-    Gradm = sph.reshape_codomain(Gradm, Lmax, Nmax+1, Lmax, Nmax)
-    Gradz = sph.reshape_codomain(Gradz, Lmax-1, Nmax, Lmax, Nmax)
+    Gradm = sph.resize(Gradm, Lmax, Nmax+1, Lmax, Nmax)
+    Gradz = sph.resize(Gradz, Lmax-1, Nmax, Lmax, Nmax)
 
     # Vector divergence operator
     Div = sph.Divergence()(m, Lmax, Nmax, alpha=1)
-    Div = sph.reshape_codomain(Div, Lmax, Nmax+1, Lmax, Nmax)
+    Div = sph.resize(Div, Lmax, Nmax+1, Lmax, Nmax)
     Divp = Div[:,:ncoeff]
     Divm = Div[:,ncoeff:2*ncoeff]
     Divz = Div[:,2*ncoeff:]
 
     # Boundary condition
     Rad = sph.RadialVector()(m, Lmax, Nmax, alpha=1)
-    Boundary = sph.boundary_evaluation(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
+    Boundary = sph.Boundary()(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
     Bound = Boundary @ Rad
     Bound = remove_zero_rows(Bound)
 
