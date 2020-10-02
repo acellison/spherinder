@@ -10,107 +10,164 @@ import greenspan_inertial_waves as greenspan
 
 import spherinder as sph
 
-def matrices(m, Lmax, Nmax, boundary_method):
+
+def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     """Construct matrices for X = [i*u(+), i*u(-), i*w, p]
     """
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
-    Grad = sph.gradient(m, Lmax, Nmax, alpha=0)
-    Div = sph.divergence(m, Lmax, Nmax, alpha=1)
-    Laps = sph.scalar_laplacian(m, Lmax, Nmax, alpha=0)
-    Lapv = sph.vector_laplacian(m, Lmax, Nmax, alpha=1, incompressible=True)
+    # Scalar laplacian
+    Laps = sph.operator('lap')(m, Lmax, Nmax, alpha=0)
+    Laps = sph.resize(Laps, Lmax, Nmax+1, Lmax, Nmax)
 
-    truncate_boundary = False
-    Boundary = sph.boundary_evaluation(m, Lmax, Nmax+int(not truncate_boundary), alpha=1, sigma=[+1,-1,0])
+    # Vector laplacian
+    Lapp, Lapm, Lapz = sph.operator('lap', 'vector')(m, Lmax, Nmax, alpha=1)
+    Lapp = sph.resize(Lapp, Lmax, Nmax+1, Lmax, Nmax)
+    Lapm = sph.resize(Lapm, Lmax, Nmax+1, Lmax, Nmax)
+    Lapz = sph.resize(Lapz, Lmax, Nmax+1, Lmax, Nmax)
 
+    # Vector divergence operator
+    Div = sph.operator('div')(m, Lmax, Nmax, alpha=1)
+    Div = sph.resize(Div, Lmax, Nmax+1, Lmax, Nmax)      # truncate Div . e(+)^* . u
+    Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
+
+    # Convert operators to the proper alpha spaces
     # u(+) conversion from alpha=1 to alpha=3
-    C1p = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax+1, alpha=1, sigma=+1)
-    C2p = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax,   alpha=2, sigma=+1)
-    Cp = C2p @ C1p
+    Cp = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=+1, truncate=True)
 
     # u(-) conversion from alpha=1 to alpha=3
-    C1m = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax+1, alpha=1, sigma=-1)
-    C2m = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax,   alpha=2, sigma=-1)
-    Cm = C2p @ C1p
+    Cm = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=-1, truncate=True)
 
     # u(z) conversion from alpha=1 to alpha=3
-    C1z = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax+1, alpha=1, sigma=0)
-    C2z = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax,   alpha=2, sigma=0)
-    Cz = C2z @ C1z
-
+    Cz = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=0, truncate=True)
+ 
     # scalar conversion from alpha=0 to alpha=2
-    C1s = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax+1, alpha=0, sigma=0)
-    C2s = sph.alpha_conversion(m, Lmax, Nmax, Ntrunc=Nmax,   alpha=1, sigma=0)
-    Cs = C2T @ C1z
+    Cs = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=0, sigma=0, truncate=True)
+
+    # Pressure gradient: convert from alpha=1 to alpha=3
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=0)
+    Cgp = sph.convert_alpha_up_n(2, m, Lmax,   Nmax,   alpha=1, sigma=+1, truncate=False)
+    Cgm = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+1, alpha=1, sigma=-1, truncate=False)
+    Cgz = sph.convert_alpha_up_n(2, m, Lmax-1, Nmax,   alpha=1, sigma=0,  truncate=False)
+    Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
+    Gradp = sph.resize(Gradp, Lmax,   Nmax+2, Lmax, Nmax)
+    Gradm = sph.resize(Gradm, Lmax,   Nmax+3, Lmax, Nmax)
+    Gradz = sph.resize(Gradz, Lmax-1, Nmax+2, Lmax, Nmax)
+
+    # Radial vector extraction, convert from alpha=1 to alpha=2
+    Rad = sph.operator('erdot')(m, Lmax, Nmax, alpha=1)
+    Cr = sph.operator('conversion')(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
+    Rad = Cr @ Rad    
+    Rad = sph.resize(Rad, Lmax+1, Nmax+2, Lmax, Nmax)
+    Radp, Radm, Radz = Rad[:,:ncoeff], Rad[:,ncoeff:2*ncoeff], Rad[:,2*ncoeff:]
+
+    # Radial vector multiplication r e_r * T, convert from alpha=1 to alpha=3
+    RTp, RTm, RTz = sph.operator('rtimes')(m, Lmax, Nmax, alpha=0)
+    CrTp = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+1,   alpha=1, sigma=+1, truncate=False)
+    CrTm = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+2, alpha=1, sigma=-1, truncate=False)
+    CrTz = sph.convert_alpha_up_n(2, m, Lmax+1, Nmax+2, alpha=1, sigma=0,  truncate=False)
+    RTp, RTm, RTz = CrTp @ RTp, CrTm @ RTm, CrTz @ RTz
+    RTp = sph.resize(RTp, Lmax,   Nmax+3, Lmax, Nmax)
+    RTm = sph.resize(RTm, Lmax,   Nmax+4, Lmax, Nmax)
+    RTz = sph.resize(RTz, Lmax+1, Nmax+4, Lmax, Nmax)
+
+    # Boundary operator
+    Boundary = sph.operator('boundary')
+    Boundp = Boundary(m, Lmax, Nmax, alpha=1, sigma=+1)
+    Boundm = Boundary(m, Lmax, Nmax, alpha=1, sigma=-1)
+    Boundz = Boundary(m, Lmax, Nmax, alpha=1, sigma=0)
+    BoundT = Boundary(m, Lmax, Nmax, alpha=0, sigma=0)
+    Bound = sparse.bmat([[  Boundp, 0*Boundm, 0*Boundz, 0*BoundT, 0*BoundT],
+                         [0*Boundp,   Boundm, 0*Boundz, 0*BoundT, 0*BoundT],
+                         [0*Boundp, 0*Boundm,   Boundz, 0*BoundT, 0*BoundT],
+                         [0*Boundp, 0*Boundm, 0*Boundz, 0*BoundT,   BoundT]])
 
     # Time derivative matrices
-    M00 = Cp
-    M11 = Cm
-    M22 = Cz
+    M00 = Ekman * Cp
+    M11 = Ekman * Cm
+    M22 = Ekman * Cz
     M33 = Zero
-    M44 = Cs
+    M44 = Prandtl * Cs
 
     # i*u+ equation - spin+ velocity component
-    L00 = -2 * Cp
+    L00 = -1j * Cp + Ekman * Lapp
     L01 = Zero
     L02 = Zero
     L03 = -Gradp
+    L04 = Rayleigh * RTp
 
     # i*u- equation - spin- velocity component
     L10 = Zero
-    L11 = 2 * Cm
+    L11 = 1j * Cm + Ekman * Lapm
     L12 = Zero
     L13 = -Gradm
+    L14 = Rayleigh * RTm
 
     # i*w equation - vertical velocity component
     L20 = Zero
     L21 = Zero
-    L22 = Zero
+    L22 = Ekman * Lapz
     L23 = -Gradz
+    L24 = Rayleigh * RTz
 
     # Divergence equation
     L30 = Divp
     L31 = Divm
     L32 = Divz
     L33 = Zero
+    L34 = Zero
 
-    Mmats = [M00, M11, M22, M33]
-    umats = [L00, L01, L02, L03]
-    vmats = [L10, L11, L12, L13]
-    wmats = [L20, L21, L22, L23]
-    pmats = [L30, L31, L32, L33]
+    # Temperature equation
+    L40 = Prandtl * Radp
+    L41 = Prandtl * Radm
+    L42 = Prandtl * Radz
+    L43 = Zero
+    L44 = Laps
+
+    Mmats = [M00, M11, M22, M33, M44]
+    upmats = [L00, L01, L02, L03, L04]
+    ummats = [L10, L11, L12, L13, L14]
+    uzmats = [L20, L21, L22, L23, L24]
+    pmats = [L30, L31, L32, L33, L34]
+    Tmats = [L40, L41, L42, L43, L44]
 
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
-    L = sparse.bmat([umats, vmats, wmats, pmats], format=sparse_format)
+    L = sparse.bmat([upmats, ummats, uzmats, pmats, Tmats], format=sparse_format)
 
     # Boundary conditions
-    def impenetrable(split_parity):
-        ntau = np.shape(Boundp)[0]
-        row = sparse.hstack([Boundp, Boundm, Boundz, sparse.lil_matrix((ntau,ncoeff))])
+    def no_slip():
+        row = Bound
 
-        # Tau contribution in the final ell coefficients
-        whichtau = (2,3)
-        connection = np.zeros((Lmax,1))
-        connection[-1,-1] = 1.
-        col1 = sparse.kron(connection, sparse.eye(Nmax))
-        col1 = sparse.bmat([[(whichtau[j]==i)*col1 for j in range(len(whichtau))] for i in range(4)])
+        alpha_bc, alpha_bc_T = 0, 0
+        Taup = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, truncate=True)
+        Taum = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, truncate=True)
+        Tauz = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
+        TauT = sph.convert_alpha_up_n(2-alpha_bc_T, m, Lmax, Nmax, alpha=alpha_bc_T, sigma=0, truncate=True)
+        taup, taum, tauz, tauT = Taup[:,-2*Nmax:], Taum[:,-2*Nmax:], Tauz[:,-2*Nmax:], TauT[:,-2*Nmax:]
 
-        # Tau contribution in final radial coefficient
-        whichtau = (0,)
-        connection = np.zeros((Nmax,1))
-        connection[-1,-1] = 1.
-        col2 = sparse.kron(sparse.eye(Lmax), connection)
-        col2 = sparse.bmat([[(whichtau[j]==i)*col2 for j in range(len(whichtau))] for i in range(4)])
+        col1 = sparse.bmat([[  taup,0*taum,0*tauz,0*tauT],
+                            [0*taup,  taum,0*tauz,0*tauT],
+                            [0*taup,0*taum,  tauz,0*tauT],
+                            [0*taup,0*taum,0*tauz,0*tauT],
+                            [0*taup,0*taum,0*tauz,  tauT]])
 
+        taup, taum, tauz, tauT = Taup[:,Nmax-1:-2*Nmax:Nmax], Taum[:,Nmax-1:-2*Nmax:Nmax], \
+                                 Tauz[:,Nmax-1:-2*Nmax:Nmax], TauT[:,Nmax-1:-2*Nmax:Nmax]
+        col2 = sparse.bmat([[  taup,0*taum,0*tauz,0*tauT],
+                            [0*taup,  taum,0*tauz,0*tauT],
+                            [0*taup,0*taum,  tauz,0*tauT],
+                            [0*taup,0*taum,0*tauz,0*tauT],
+                            [0*taup,0*taum,0*tauz,  tauT]])
+ 
         col = sparse.hstack([col1,col2])
-
         return row, col
 
     # Create the boundary condition rows and tau columns
-    row, col = impenetrable(split_parity=False)
+    row, col = no_slip()
+
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[  L, col],
                      [row, corner]], format='csr')
@@ -122,24 +179,36 @@ def matrices(m, Lmax, Nmax, boundary_method):
     return M, L
 
 
+def checkdir(filename):
+    filename = os.path.abspath(filename)
+    path = os.path.dirname(filename)
+    if not os.path.exists(path):
+        os.mkdir(path)
+
 def savedata(filename, data):
+    checkdir(filename)
     with open(filename, 'wb') as f:
         pickle.dump(data, f)
 
 
+def savefig(filename):
+    checkdir(filename)
+    plt.savefig(filename)
+    
+
 def filename_prefix(directory='data'):
     basepath = os.path.join(os.path.dirname(__file__), directory)
-    prefix = 'geometric_inertial_waves'
+    prefix = 'geometric_linear_onset'
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
-def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data'):
-    return filename_prefix(directory) + '-evalues-m={}-Lmax={}-Nmax={}-{}.pckl'.format(m,Lmax,Nmax,boundary_method)
+def pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='data'):
+    return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}.pckl'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     # Construct the system
-    M, L = matrices(m, Lmax, Nmax, boundary_method)
+    M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
 
     plot_spy = False
     if plot_spy:
@@ -155,8 +224,9 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
             'boundary_method': boundary_method,
-            'evalues': evalues, 'evectors': evectors}
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+            'evalues': evalues, 'evectors': evectors,
+            'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     savedata(filename, data)
 
 
@@ -164,62 +234,52 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     z = 2*s**2 - 1
 
     ncoeff = Lmax*Nmax
-    tau = vec[4*ncoeff:]
-    print(tau)
 
-    upbasis = [psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
-    umbasis = [psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
-    u0basis = [psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
-    pbasis  = [psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
+    upbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
+    umbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
+    uzbasis = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
+    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
+    Tbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
 
     # Get the grid space vector fields
     vec = vec.astype(np.complex128)
-    vec[:3*ncoeff] /= 1j
     upcoeff = vec[:ncoeff] 
     umcoeff = vec[ncoeff:2*ncoeff] 
-    wcoeff = vec[2*ncoeff:3*ncoeff]
+    uzcoeff = vec[2*ncoeff:3*ncoeff]
     pcoeff = vec[3*ncoeff:4*ncoeff]
+    Tcoeff = vec[4*ncoeff:5*ncoeff]
+    tau = vec[5*ncoeff:]
 
     # Convert to grid space
-    up = expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
-    um = expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
-    w  = expand(u0basis, np.reshape( wcoeff, (Lmax,Nmax)))
-    p  = expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
-    u =       np.sqrt(0.5) * (up + um)
-    v = -1j * np.sqrt(0.5) * (up - um)
+    up = sph.expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
+    um = sph.expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
+    uz = sph.expand(uzbasis, np.reshape(uzcoeff, (Lmax,Nmax)))
+    p  = sph.expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
+    T  = sph.expand( Tbasis, np.reshape( Tcoeff, (Lmax,Nmax)))
+    u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
-    ns, neta = len(s), len(eta)
-    ss, ee = s.reshape(1,ns), eta.reshape(neta,1)
-    ur = np.sqrt(0.5) * ss * (up + um) + ee * np.sqrt(1-ss**2) * w
-
-    return u, v, w, p, ur
+    return u, v, w, p, T, tau
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields):
     save_plots = True
-    plot_field_indices = [2,3,4]
-#    mode_index = (4,2,1)
-    mode_index = (60,29,1)
+    plot_field_indices = [0,2,4]
 
     # Load the data
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
     if save_plots:
-        def savefig(fn): plt.savefig(fn)
+        def save(fn): savefig(fn)
     else:
-        def savefig(_): pass
+        def save(_): pass
 
-    evalue_target = 2*greenspan.compute_eigenvalues(mode_index[0], mode_index[2])[mode_index[1]-1]
-    modestr = str(mode_index[0]) + str(mode_index[1]) + str(mode_index[2])
-    configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
+    evalue_target = omega
+    configstr = f'-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}'
     prefix = filename_prefix('figures')
-
-    nbad = len(np.where(np.abs(evalues.imag) > 1e-15)[0])
-    print('Number of bad eigenvalues: {}/{}'.format(nbad,len(evalues)))
 
     # Plot the eigenvalues
     if plot_evalues:
@@ -228,50 +288,29 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plo
         ax.grid()
         ax.set_xlabel('Real(λ)')
         ax.set_ylabel('Imag(λ)')
-        ax.set_title('Inertial Wave Eigenvalues in the Stretched Sphere')
+        ax.set_title('Linear Onset Eigenvalues in the Stretched Sphere')
         fig.set_tight_layout(True)
 
-        filename = prefix + '-evalues-' + configstr + '.png'
-        savefig(filename)
+        filename = prefix + configstr + '-evalues.png'
+        save(filename)
 
-    if not (plot_slices or plot_fields):
+    if not plot_fields:
         return
 
     # Get the target eigenpair
     index = np.argmin(abs(evalues - evalue_target))
     val, vec = evalues[index], evectors[:,index]
 
+    print('Omega target: {:1.4f}'.format(omega))
     print('Plotting eigenvector with eigenvalue {:1.4f}'.format(val))
 
     # Construct the basis polynomials
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    u, v, w, p, ur = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
+    u, v, w, p, T, tau = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
 
-    # Spherical radial velocity component
-    error_top = np.max(np.abs(ur[-1,:]))
-    error_bot = np.max(np.abs(ur[ 0,:]))
-    if error_top > 1.5e-12 or error_bot > 1.5e-12:
-        print('Top    boundary error: {:1.3e}'.format(error_top))
-        print('Bottom boundary error: {:1.3e}'.format(error_bot))
-#    assert np.max(abs(ur[-1,:])) < 1.5e-12
-#    assert np.max(abs(ur[ 0,:])) < 1.5e-12
-
-    fields = [u,v,w,p,ur]
-    field_names = ['u','v','w','p','u_r']
-
-    if plot_slices:
-        # Spherical radial velocity at the boundary
-        fig, radial_axes = plt.subplots()
-        radial_axes.plot(s, np.abs(ur[-1,:]), label='top')
-        radial_axes.plot(s, np.abs(ur[ 0,:]), label='bottom')
-        radial_axes.set_title('spherical radial velocity component')
-        radial_axes.set_xlabel('s')
-        radial_axes.legend()
-        radial_axes.grid()
-
-    if not plot_fields:
-        plot_field_indices = []
+    fields = [u,v,w,p,T]
+    field_names = ['u','v','w','p','T']
 
     for i in range(len(plot_field_indices)):
         field_index = plot_field_indices[i]
@@ -279,30 +318,45 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plo
         relative_real = np.linalg.norm(np.real(Fgrid))/np.linalg.norm(Fgrid)
         f = Fgrid.real if relative_real > 0.5 else Fgrid.imag
 
-        plotfield(s, eta, f)
+        sph.plotfield(s, eta, f)
         plt.title(r'${}$'.format(field_names[field_index]))
-        filename = prefix + '-evector-' + configstr + '-' + modestr + '-' + field_names[field_index] + '.png'
-        savefig(filename)
+        filename = prefix + configstr + '-evector-' + field_names[field_index] + '.png'
+        save(filename)
 
+
+def rotation_configs():
+    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
+            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 24},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 16, 'Nmax': 24},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 16, 'Nmax': 24},
+            {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
+            {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 16, 'Nmax': 32}]
 
 def main():
-    solve = True
+    solve = False
     plot_evalues = True
     plot_fields = True
-    plot_slices = False
 
-    m = 1
-    Lmax, Nmax = 10, 32
+    config_index = 2
+    config = rotation_configs()[config_index]
+
+    m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
+    Lmax, Nmax = config['Lmax'], config['Nmax']
     boundary_method = 'tau'
 
-    print('Inertial Waves, m = {}'.format(m))
+    omega = 1j*omega/Ekman**(2/3)
+    Rayleigh /= Ekman**(1/3)
+
+    print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}, Prandtl = {Prandtl}, Rayleigh = {Rayleigh:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
 
-    if plot_fields or plot_evalues or plot_slices:
-        plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_slices, plot_fields)
+    if plot_fields or plot_evalues:
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields)
         plt.show()
 
 
