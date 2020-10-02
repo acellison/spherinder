@@ -73,12 +73,8 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
     Other keyword options passed to scipy.sparse.linalg.eigs.
     """
     if matsolver is None:
-        solvers = ['UmfpackSpsolve', 'SuperluNaturalSpsolve', 'SuperluColamdSpsolve',
-                   'UmfpackFactorized', 'SuperluNaturalFactorized', 'SuperluColamdFactorized',
-                   'ScipyBanded', 'SPQR_solve', 'BandedQR', 'SparseInverse',
-                   'DenseInverse', 'BlockInverse']
         index = 1
-        matsolver = de.matsolvers.matsolvers[solvers[index].lower()]
+        matsolver = de.matsolvers.matsolvers[matsolvers[index].lower()]
 
     if profile:
         print("  Starting eigenvalue computation at {}...".format(datetime.datetime.now()), flush=True)
