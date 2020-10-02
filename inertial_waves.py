@@ -204,20 +204,21 @@ def inertial_waves(B, m, domain):
 
     # Print the eigenvalues
     print('    m: {:2d},  largest real eigenvalue: {}'.format(m, lam[-1]))
-    for l in lam:
-        print("    m = {:2d}, evalues = {}".format(m, l))
 
     # Analytic eigenvalues are in real and in the interval [-2,2].
     # They are solutions to the eigenvalue problem:
     #   m * P_l^|m|(λ/2) = 2*(1 - λ**2/4) * d/dλ P_l^|m|(λ/2),
     dirtylam = np.copy(lam)
-    bad = np.logical_or(np.abs(lam.imag) > 1e-12, np.abs(lam.real) > 2)
+#    bad = np.logical_or(np.abs(lam.imag) > 1e-12, np.abs(lam.real) > 2)
+    bad = np.abs(lam.real) > 2
     lam[bad] = np.nan
     v = v[:,np.isfinite(lam)]
     lam = lam[np.isfinite(lam)]
 
     ntotal = np.shape(Amat)[0]
     print("  Number of good eigenvalues = {}/{}".format(len(lam), ntotal))
+    maximag = np.max(np.abs(lam.imag))
+    print("  Largest imaginary part: {}".format(maximag))
 
     plt.plot(np.real(dirtylam), np.imag(dirtylam), '.', markersize=3, color='tab:orange')
     plt.plot(np.real(lam), np.imag(lam), '.', markersize=3, color='tab:blue')
@@ -255,6 +256,9 @@ def inertial_waves(B, m, domain):
     targets[(10,3,0)] = 1.568967
     targets[(10,4,0)] = 1.868003
 
+    targets = {}
+    targets[(130, (130-95)//2, 95)] = -0.053348
+
     target_ids = [key for key in targets.keys() if key[2] == m]
     for index in target_ids:
         modestr = str(index[0]) + str(index[1]) + str(index[2])
@@ -270,26 +274,18 @@ def inertial_waves(B, m, domain):
         p = ball.TensorField_3D(0, B, domain)
         state_vector.unpack(evec, [u, p])
 
-        u, r, theta, phi = dealias(B, domain, u, L_factor=5/2, N_factor=5/2)
-        ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
-
-        # ux = ur * np.sin(theta) * np.cos(phi) + utheta * np.cos(theta) * np.cos(phi) - uphi * np.sin(phi)
-        # uy = ur * np.sin(theta) * np.sin(phi) + utheta * np.cos(theta) * np.sin(phi) + uphi * np.cos(phi)
-        # uz = ur * np.cos(theta)               - utheta * np.sin(theta)
-        #
-        # plotmeridionalquiver(ux, uz, r, theta, phi)
-        # plt.title('Mode {}'.format(index))
-        # filename = 'figures/inertial_waves/inertial_wave-mode={}-quiver.png'.format(modestr)
-        # savefig(filename)
+        angle = 0.
+        filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
 
         # Dealias for plotting
         res = 256
         L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
         p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
+
+        """
         u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
         ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
 
-        filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
 
         # Plot
         # if m > 0:
@@ -306,8 +302,6 @@ def inertial_waves(B, m, domain):
             plt.title('Greenspan Mode {}, Equatorial Slice, $u_ϕ$'.format(index))
             savefig(filename('uphi', 'e'))
 
-        angle = 0.
-
         plotmeridionalslice(ur, r, theta, phi, angle=angle)
         plt.title('Greenspan Mode {}, Meridional Slice, $u_r$'.format(index))
         savefig(filename('ur', 'm'))
@@ -319,22 +313,26 @@ def inertial_waves(B, m, domain):
         plotmeridionalslice(uphi, r, theta, phi, angle=angle)
         plt.title('Greenspan Mode {}, Meridional Slice, $u_φ$'.format(index))
         savefig(filename('uphi', 'm'))
+        """
 
         plotmeridionalslice(p['g'][0], r, theta, phi, angle=angle)
         plt.title('Greenspan Mode {}, Meridional Slice, $p$'.format(index))
         savefig(filename('p', 'm'))
 
-        if save_plots:
-            plt.close('all')
+#        if save_plots:
+#            plt.close('all')
 
     plt.show()
     return lam, v
 
 def main():
     # Create the domain
-    m = 1
-    L_max = 15
-    B, domain = build_ball(L_max=L_max, N_max=L_max)
+    m = 95
+    L_max = (m-1)+20
+    N_max = 100
+    B, domain = build_ball(L_max=L_max, N_max=N_max)
+
+    # Solve the eigenproblem
     lam, v = inertial_waves(B, m, domain)
 
 
