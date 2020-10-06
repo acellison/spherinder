@@ -6,6 +6,8 @@ from eigtools import eigsort
 import os
 import pickle
 
+from dedalus_sphere import jacobi as Jacobi
+
 import config
 config.internal_dtype = 'float64'
 import spherinder as sph
@@ -38,29 +40,57 @@ def analytic_evalues(m, L, N):
 def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
     """Construct matrices for Bessel's eigenproblem, Lap(f) + λ f = 0
     """
-    alpha_bc = 0
-    nconv = 2-alpha_bc
+    alpha = 0
+    alpha_bc = alpha+1
+    alpha_bc_n = alpha+1
+    alpha_bc_trunc = alpha+2
+    trunc_kind = 'beta'  # one of [alpha, beta]
 
     # Differentiation matrices
-    M = -sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=0, sigma=0, truncate=truncate)
-    L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
+    M = -sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=alpha, sigma=0, truncate=truncate)
+    L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=alpha)
 
-    # Boundary conditions
-    row = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0)
-    Conv = sph.convert_alpha_up_n(nconv, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=truncate)
-
+    # Resize matrices as needed
     if truncate:
         L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
     else:
-        Ntrunc = Nmax+2
+        n_for_ell = lambda ell: Nmax+1 if ell < Lmax-2 else Nmax
+        M = sph.resize(M, Lmax, Nmax+1, Lmax, n_for_ell)
+        L = sph.resize(L, Lmax, Nmax+1, Lmax, n_for_ell)
 
-        M = sph.resize(M, Lmax, Nmax+2, Lmax, Ntrunc)
-        L = sph.resize(L, Lmax, Nmax+1, Lmax, Ntrunc)
-        Conv = sph.resize(Conv, Lmax, Nmax+2, Lmax, Ntrunc)
-
-    col2 = Conv[:,Nmax-1:-2*Nmax:Nmax]
+    # Boundary condition in eta direction
+    Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=truncate)
+    if not truncate:
+        Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
     col1 = Conv[:,-2*Nmax:]
+
+    # Boundary condition in s direction
+    Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc_n, m, Lmax, Nmax, alpha=alpha_bc_n, sigma=0, truncate=truncate)
+    if not truncate:
+        Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
+    col2 = Conv[:,Nmax-1:-2*Nmax:Nmax]
+
     col = sparse.hstack([col1,col2])
+
+    # Additional tau columns for non-truncation
+    if not truncate:
+        if trunc_kind == 'alpha':
+            Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc_trunc, m, Lmax, Nmax, alpha=alpha_bc_trunc, sigma=0, truncate=truncate)
+            Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
+            col3 = Conv[:,Nmax-2:-2*Nmax:Nmax]
+        elif trunc_kind == 'beta':
+            zmat = sparse.eye(Lmax)
+            A = Jacobi.operator('A')
+            smats = [(A(+1)**(alpha+2-alpha_bc_trunc))(Nmax+1,ell+alpha_bc_trunc+1/2,m) for ell in range(Lmax)]
+            op = sph.make_operator(zmat, smats)
+            op = sph.resize(op, Lmax, Nmax+1, Lmax, n_for_ell)
+            col3 = op[:,Nmax:-2*(Nmax+1):Nmax+1]
+        else:
+            raise ValueError('Unrecognized boundary kind')
+        col = sparse.hstack([col,col3])
+
+    # Boundary condition
+    row = sph.operator('boundary')(m, Lmax, Nmax, alpha=alpha, sigma=0)
 
     # Create the boundary condition rows and tau columns
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
@@ -136,8 +166,24 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     basis = [sph.psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, dtype=dtype) for ell in range(Lmax)]
     f = sph.expand(basis, fcoeff)
 
-    f /= np.max(abs(f))
+#    f /= np.max(abs(f))
     return f, tau
+
+
+def check_boundary(m, Lmax, Nmax, evalues, evectors, plot=False):
+    bc = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0)
+    result = bc @ evectors[:Nmax*Lmax,:]
+    error = np.linalg.norm(result, axis=0)
+    index = np.argmax(error)
+
+    if plot:
+        plt.figure()
+        plt.semilogy(error)
+        plt.xlabel('Mode Index')
+        plt.ylabel('L2 coefficient error')
+        plt.title('Boundary Error')
+        plt.grid()
+    print('Worst case coefficient error, index {}, evalue {}, L2 error {:1.4e}'.format(index, evalues[index], error[index]))
 
 
 def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
@@ -160,15 +206,16 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     else:
         def save(_): pass
 
-#    evalue_target = 392.**2
     evalue_target = 49.14**2
-#    evalue_target = 61.95**2
+#    evalue_target = 112.60858**2
     configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
     prefix = filename_prefix('figures')
 
     ntotal = len(evalues)
     nimag = len(np.where(np.abs(evalues.imag) > 1e-15)[0])
     print(f'Number of complex eigenvalues: {nimag}/{ntotal}')
+
+    check_boundary(m, Lmax, Nmax, evalues, evectors)
 
     # Plot the eigenvalues
     if plot_evalues:
@@ -226,7 +273,7 @@ def main():
     plot_fields = True
 
     m = 10
-    Lmax, Nmax = 16, 16
+    Lmax, Nmax = 20, 30
     boundary_method = 'tau'
 
     print('Bessel Eigenproblem, m = {}'.format(m))
