@@ -47,7 +47,7 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
     trunc_kind = 'beta'  # one of [alpha, beta]
 
     # Differentiation matrices
-    M = -sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=alpha, sigma=0, truncate=truncate)
+    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=alpha, sigma=0, truncate=truncate)
     L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=alpha)
 
     # Resize matrices as needed
@@ -59,13 +59,13 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
         L = sph.resize(L, Lmax, Nmax+1, Lmax, n_for_ell)
 
     # Boundary condition in eta direction
-    Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=truncate)
+    Conv = sph.convert_alpha(alpha+2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=truncate)
     if not truncate:
         Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
     col1 = Conv[:,-2*Nmax:]
 
     # Boundary condition in s direction
-    Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc_n, m, Lmax, Nmax, alpha=alpha_bc_n, sigma=0, truncate=truncate)
+    Conv = sph.convert_alpha(alpha+2-alpha_bc_n, m, Lmax, Nmax, alpha=alpha_bc_n, sigma=0, truncate=truncate)
     if not truncate:
         Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
     col2 = Conv[:,Nmax-1:-2*Nmax:Nmax]
@@ -75,7 +75,7 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
     # Additional tau columns for non-truncation
     if not truncate:
         if trunc_kind == 'alpha':
-            Conv = sph.convert_alpha_up_n(alpha+2-alpha_bc_trunc, m, Lmax, Nmax, alpha=alpha_bc_trunc, sigma=0, truncate=truncate)
+            Conv = sph.convert_alpha(alpha+2-alpha_bc_trunc, m, Lmax, Nmax, alpha=alpha_bc_trunc, sigma=0, truncate=truncate)
             Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
             col3 = Conv[:,Nmax-2:-2*Nmax:Nmax]
         elif trunc_kind == 'beta':

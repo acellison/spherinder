@@ -537,14 +537,20 @@ def operator(name, field=None, dtype='float64'):
     raise ValueError('Unknown operator')
 
 
-def convert_alpha_up_n(n, m, Lmax, Nmax, alpha, sigma, truncate, dtype='float64'):
+def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, truncate, dtype='float64'):
     Conv = operator('conversion', dtype=internal_dtype)
     op = sparse.eye(Lmax*Nmax, format='csr', dtype=internal_dtype)
-    for i in range(n):
+    for i in range(ntimes):
         op1 = Conv(m, Lmax, Nmax+i, alpha=alpha+i, sigma=sigma)
         op = op1 @ op
     Ntrunc = Nmax if truncate else Nmax+1
-    op = resize(op, Lmax, Nmax+n, Lmax, Ntrunc)
+    op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc)
     return op.astype(dtype)
     
+
+def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64'):
+    zmat = sparse.eye(Lmax)
+    smats = [(A(+1)**beta)(Nmax,ell+alpha-beta+1/2,m+sigma) for ell in range(Lmax)]
+    op = make_operator(zmat, smats)
+    return op.astype(dtype)
 

@@ -24,6 +24,27 @@ def matrices(m, Lmax, Nmax, boundary_method):
           we need to enforce the final n coefficient of u(+) is zero
           
     """
+    alpha_bc_p = 0    # tau polynomial basis in u(+) equation, no greater than 1
+    alpha_bc_z = 0    # tau polynomial basis in u(z) equation, no greater than 1
+    alpha_bc_div = 1  # tau polynomial basis in div equation, no greater than 2
+    beta_bc_p = 1     # tau polynomial basis shift, no greater than 1
+    beta_bc_z = 0     # tau polynomial basis shift, no greater than 1
+    beta_bc_div = 0   # tau polynomial basis shift, no greater than 2
+
+    if alpha_bc_p > 1:
+        raise ValueError('Tau polynomial has alpha too high in p equation')
+    if alpha_bc_z > 1:
+        raise ValueError('Tau polynomial has alpha too high in z equation')
+    if alpha_bc_div > 2:
+        raise ValueError('Tau polynomial has alpha too high in div equation')
+    if beta_bc_p > 1:
+        raise ValueError('Tau polynomial has beta too high in p equation')
+    if beta_bc_z > 1:
+        raise ValueError('Tau polynomial has beta too high in z equation')
+    if beta_bc_div > 2:
+        raise ValueError('Tau polynomial has beta too high in div equation')
+
+
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
@@ -93,9 +114,16 @@ def matrices(m, Lmax, Nmax, boundary_method):
         row = sparse.hstack([Bound, sparse.lil_matrix((ntau,ncoeff))])
 
         # Tau contribution in the final ell coefficients
-        alpha_bc = 1
-        Convz1 = sph.convert_alpha_up_n(1, m, Lmax, Nmax, alpha=0, sigma=0, truncate=True)
-        Convz2 = sph.convert_alpha_up_n(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
+        if beta_bc_z > 0:
+            Convz1 = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=0, beta=beta_bc_z)
+        else:
+            Convz1 = sph.convert_alpha(1-alpha_bc_z, m, Lmax, Nmax, alpha=alpha_bc_z, sigma=0, truncate=True)
+
+        if beta_bc_div > 0:
+            Convz2 = sph.convert_beta(m, Lmax, Nmax, alpha=2, sigma=0, beta=beta_bc_div)
+        else:
+            Convz2 = sph.convert_alpha(2-alpha_bc_div, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, truncate=True)
+
         conv1, conv2 = Convz1[:,-Nmax:], Convz2[:,-Nmax:]
         col1 = sparse.bmat([[0*conv1,0*conv2],
                             [0*conv1,0*conv2],
@@ -104,12 +132,14 @@ def matrices(m, Lmax, Nmax, boundary_method):
 
         # Tau contribution in final radial coefficient
         whichtau = (0,)
-        Convp = sph.convert_alpha_up_n(1, m, Lmax, Nmax, alpha=0, sigma=+1, truncate=True)
+        if beta_bc_p > 0:
+            Convp = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=+1, beta=beta_bc_p)
+        else:
+            Convp = sph.convert_alpha(1-alpha_bc_p, m, Lmax, Nmax, alpha=alpha_bc_p, sigma=+1, truncate=True)
         col2 = Convp[:,Nmax-1::Nmax]
-        col2 = sparse.bmat([[(whichtau[j]==i)*col2 for j in range(len(whichtau))] for i in range(4)])
+        col2 = sparse.vstack([col2,0*col2,0*col2,0*col2])
 
         col = sparse.hstack([col1,col2])
-
         return row, col
 
     # Create the boundary condition rows and tau columns
@@ -156,7 +186,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
     # Construct the system
     M, L = matrices(m, Lmax, Nmax, boundary_method)
 
-    plot_spy = True
+    plot_spy = False
     if plot_spy:
         fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
         plot_axes[0].spy(L)
@@ -304,7 +334,7 @@ def main():
     plot_fields = True
 
     m = 95
-    Lmax, Nmax = 8, 8
+    Lmax, Nmax = 16, 24
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))

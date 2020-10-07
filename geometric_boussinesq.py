@@ -3,24 +3,28 @@ import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 
 from dedalus_sphere import jacobi as Jacobi
-from eigtools import eigsort
+from eigtools import eigsort, discard_spurious_eigenvalues
 import os
 import pickle
 import greenspan_inertial_waves as greenspan
 
 import spherinder as sph
 
+g_alpha_p = 2
+g_alpha_T = 0
+
 
 def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     """Construct matrices for X = [i*u(+), i*u(-), i*w, p]
     """
+    alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
     # Scalar laplacian
-    Laps = sph.operator('lap')(m, Lmax, Nmax, alpha=0)
-    Laps = sph.resize(Laps, Lmax, Nmax+1, Lmax, Nmax)
+    LapT = sph.operator('lap')(m, Lmax, Nmax, alpha=g_alpha_T)
+    LapT = sph.resize(LapT, Lmax, Nmax+1, Lmax, Nmax)
 
     # Vector laplacian
     Lapp, Lapm, Lapz = sph.operator('lap', 'vector')(m, Lmax, Nmax, alpha=1)
@@ -35,50 +39,50 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
 
     # Convert operators to the proper alpha spaces
     # u(+) conversion from alpha=1 to alpha=3
-    Cp = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=+1, truncate=True)
+    Cp = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=+1, truncate=True)
 
     # u(-) conversion from alpha=1 to alpha=3
-    Cm = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=-1, truncate=True)
+    Cm = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=-1, truncate=True)
 
     # u(z) conversion from alpha=1 to alpha=3
-    Cz = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=1, sigma=0, truncate=True)
+    Cz = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=0, truncate=True)
  
-    # scalar conversion from alpha=0 to alpha=2
-    Cs = sph.convert_alpha_up_n(2, m, Lmax, Nmax, alpha=0, sigma=0, truncate=True)
+    # scalar conversion from alpha to alpha+2
+    Cs = sph.convert_alpha(2, m, Lmax, Nmax, alpha=g_alpha_T, sigma=0, truncate=True)
 
-    # Pressure gradient: convert from alpha=1 to alpha=3
-    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=0)
-    Cgp = sph.convert_alpha_up_n(2, m, Lmax,   Nmax,   alpha=1, sigma=+1, truncate=False)
-    Cgm = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+1, alpha=1, sigma=-1, truncate=False)
-    Cgz = sph.convert_alpha_up_n(2, m, Lmax-1, Nmax,   alpha=1, sigma=0,  truncate=False)
+    # Pressure gradient
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=g_alpha_p)
+    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, truncate=False)
+    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, truncate=False)
+    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  truncate=False)
     Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
-    Gradp = sph.resize(Gradp, Lmax,   Nmax+2, Lmax, Nmax)
-    Gradm = sph.resize(Gradm, Lmax,   Nmax+3, Lmax, Nmax)
-    Gradz = sph.resize(Gradz, Lmax-1, Nmax+2, Lmax, Nmax)
+    Gradp = sph.resize(Gradp, Lmax,   Nmax+1, Lmax, Nmax)
+    Gradm = sph.resize(Gradm, Lmax,   Nmax+2, Lmax, Nmax)
+    Gradz = sph.resize(Gradz, Lmax-1, Nmax+1, Lmax, Nmax)
 
-    # Radial vector extraction, convert from alpha=1 to alpha=2
+    # Radial vector extraction
     Rad = sph.operator('erdot')(m, Lmax, Nmax, alpha=1)
-    Cr = sph.operator('conversion')(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
-    Rad = Cr @ Rad    
+    Cr = sph.convert_alpha(1+g_alpha_T, m, Lmax+1, Nmax+1, alpha=1, sigma=0, truncate=False)
+    Rad = Cr @ Rad
     Rad = sph.resize(Rad, Lmax+1, Nmax+2, Lmax, Nmax)
     Radp, Radm, Radz = Rad[:,:ncoeff], Rad[:,ncoeff:2*ncoeff], Rad[:,2*ncoeff:]
 
     # Radial vector multiplication r e_r * T, convert from alpha=1 to alpha=3
-    RTp, RTm, RTz = sph.operator('rtimes')(m, Lmax, Nmax, alpha=0)
-    CrTp = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+1,   alpha=1, sigma=+1, truncate=False)
-    CrTm = sph.convert_alpha_up_n(2, m, Lmax,   Nmax+2, alpha=1, sigma=-1, truncate=False)
-    CrTz = sph.convert_alpha_up_n(2, m, Lmax+1, Nmax+2, alpha=1, sigma=0,  truncate=False)
+    RTp, RTm, RTz = sph.operator('rtimes')(m, Lmax, Nmax, alpha=g_alpha_T)
+    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+1, alpha=1+g_alpha_T, sigma=+1, truncate=False)
+    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+2, alpha=1+g_alpha_T, sigma=-1, truncate=False)
+    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lmax+1, Nmax+2, alpha=1+g_alpha_T, sigma=0,  truncate=False)
     RTp, RTm, RTz = CrTp @ RTp, CrTm @ RTm, CrTz @ RTz
-    RTp = sph.resize(RTp, Lmax,   Nmax+3, Lmax, Nmax)
-    RTm = sph.resize(RTm, Lmax,   Nmax+4, Lmax, Nmax)
-    RTz = sph.resize(RTz, Lmax+1, Nmax+4, Lmax, Nmax)
+    RTp = sph.resize(RTp, Lmax,   Nmax+2, Lmax, Nmax)
+    RTm = sph.resize(RTm, Lmax,   Nmax+3, Lmax, Nmax)
+    RTz = sph.resize(RTz, Lmax+1, Nmax+3, Lmax, Nmax)
 
     # Boundary operator
     Boundary = sph.operator('boundary')
     Boundp = Boundary(m, Lmax, Nmax, alpha=1, sigma=+1)
     Boundm = Boundary(m, Lmax, Nmax, alpha=1, sigma=-1)
     Boundz = Boundary(m, Lmax, Nmax, alpha=1, sigma=0)
-    BoundT = Boundary(m, Lmax, Nmax, alpha=0, sigma=0)
+    BoundT = Boundary(m, Lmax, Nmax, alpha=g_alpha_T, sigma=0)
     Bound = sparse.bmat([[  Boundp, 0*Boundm, 0*Boundz, 0*BoundT, 0*BoundT],
                          [0*Boundp,   Boundm, 0*Boundz, 0*BoundT, 0*BoundT],
                          [0*Boundp, 0*Boundm,   Boundz, 0*BoundT, 0*BoundT],
@@ -124,7 +128,7 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     L41 = Prandtl * Radm
     L42 = Prandtl * Radz
     L43 = Zero
-    L44 = Laps
+    L44 = LapT
 
     Mmats = [M00, M11, M22, M33, M44]
     upmats = [L00, L01, L02, L03, L04]
@@ -141,21 +145,21 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     def no_slip():
         row = Bound
 
-        alpha_bc, alpha_bc_T = 0, 0
-        Taup = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, truncate=True)
-        Taum = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, truncate=True)
-        Tauz = sph.convert_alpha_up_n(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
-        TauT = sph.convert_alpha_up_n(2-alpha_bc_T, m, Lmax, Nmax, alpha=alpha_bc_T, sigma=0, truncate=True)
-        taup, taum, tauz, tauT = Taup[:,-2*Nmax:], Taum[:,-2*Nmax:], Tauz[:,-2*Nmax:], TauT[:,-2*Nmax:]
-
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, truncate=True)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, truncate=True)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lmax, Nmax, alpha=alpha_bc_s, sigma=0, truncate=True)
+        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lmax, Nmax, alpha=alpha_bc_T, sigma=0, truncate=True)
+        taup, taum, tauz, taus, tauT = Taup[:,-2*Nmax:], Taum[:,-2*Nmax:], Tauz[:,-2*Nmax:], Taus[:,-2*Nmax:], TauT[:,-2*Nmax:]
         col1 = sparse.bmat([[  taup,0*taum,0*tauz,0*tauT],
                             [0*taup,  taum,0*tauz,0*tauT],
                             [0*taup,0*taum,  tauz,0*tauT],
                             [0*taup,0*taum,0*tauz,0*tauT],
                             [0*taup,0*taum,0*tauz,  tauT]])
 
-        taup, taum, tauz, tauT = Taup[:,Nmax-1:-2*Nmax:Nmax], Taum[:,Nmax-1:-2*Nmax:Nmax], \
-                                 Tauz[:,Nmax-1:-2*Nmax:Nmax], TauT[:,Nmax-1:-2*Nmax:Nmax]
+        taup, taum, tauz, taus, tauT = Taup[:,Nmax-1:-2*Nmax:Nmax], Taum[:,Nmax-1:-2*Nmax:Nmax], \
+                                       Tauz[:,Nmax-1:-2*Nmax:Nmax], Taus[:,Nmax-1:-2*Nmax:Nmax], \
+                                       TauT[:,Nmax-1:-2*Nmax:Nmax]
         col2 = sparse.bmat([[  taup,0*taum,0*tauz,0*tauT],
                             [0*taup,  taum,0*tauz,0*tauT],
                             [0*taup,0*taum,  tauz,0*tauT],
@@ -238,11 +242,10 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     upbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
     umbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
     uzbasis = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
-    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
-    Tbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
+    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
+    Tbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_T) for ell in range(Lmax)]
 
     # Get the grid space vector fields
-    vec = vec.astype(np.complex128)
     upcoeff = vec[:ncoeff] 
     umcoeff = vec[ncoeff:2*ncoeff] 
     uzcoeff = vec[2*ncoeff:3*ncoeff]
@@ -327,15 +330,15 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
 def rotation_configs():
     return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 24},
-            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 16, 'Nmax': 24},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 16, 'Nmax': 24},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 28},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 12, 'Nmax': 20},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 12, 'Nmax': 24},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 16, 'Nmax': 32}]
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 12, 'Nmax': 40}]
 
 def main():
-    solve = False
+    solve = True
     plot_evalues = True
     plot_fields = True
 
@@ -360,6 +363,41 @@ def main():
         plt.show()
 
 
+def analyze_evalues():
+    config_index = 2
+    config = rotation_configs()[config_index]
+
+    m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
+    Lmax, Nmax = config['Lmax'], config['Nmax']
+    boundary_method = 'tau'
+
+    omega = 1j*omega/Ekman**(2/3)
+    Rayleigh /= Ekman**(1/3)
+
+    Nlores, Nhires = 28, 32
+
+    def load_evalues(N):
+        filename = pickle_filename(m, Lmax, N, boundary_method, Ekman, Prandtl, Rayleigh)
+        data = pickle.load(open(filename, 'rb'))
+        return data['evalues']
+        
+    evalues_lores, evalues_hires = load_evalues(Nlores), load_evalues(Nhires)
+    evalues = discard_spurious_eigenvalues(evalues_lores, evalues_hires, cutoff=1e6, plot=True)
+
+    print('Number of good eigenvalues: {}/{}'.format(len(evalues), len(evalues_lores)))
+
+    fig, ax = plt.subplots()
+    ax.plot(evalues.real, evalues.imag, '.', markersize=2)
+    ax.grid()
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
+    ax.set_title('Linear Onset Eigenvalues in the Stretched Sphere')
+    fig.set_tight_layout(True)
+
+    plt.show()
+
+
 if __name__=='__main__':
     main()
+#    analyze_evalues()
 
