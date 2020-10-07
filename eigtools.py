@@ -186,8 +186,8 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
 
     if plot:
         plt.figure()
-        plt.semilogy(1/delta_near, '.', marker='o', label=r'$δ_{nearest}$')
-        plt.semilogy(1/delta_ord,  '.', marker='x', label=r'$δ_{ordinal}$')
+        plt.semilogy(1/delta_near, '.', marker='o', markersize=1.5, label=r'$δ_{nearest}$')
+        plt.semilogy(1/delta_ord,  '.', marker='x', markersize=1.5, label=r'$δ_{ordinal}$')
         plt.xlabel('Mode Number')
         plt.grid(True)
         plt.title('Reciprocal eigenvalue drift ratios')
