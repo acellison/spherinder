@@ -198,3 +198,28 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
 
     return goodevals
 
+
+def plot_spectrum(evalues, callback=None, *args, **kwargs):
+    def onpick(event):
+        thisline = event.artist
+        xdata = thisline.get_xdata()
+        ydata = thisline.get_ydata()
+        ind = event.ind
+        point = tuple(zip(xdata[ind], ydata[ind]))[0]
+        evalue = point[0] + 1j*point[1]
+        print('selected eigenvalue: {}'.format(evalue))
+
+        if callback is not None:
+            index = np.argmin(np.abs(evalues-evalue))
+            callback(index)
+        return True
+
+    fig, ax = plt.subplots()
+    ax.plot(evalues.real, evalues.imag, '.', markersize=2, picker=5, *args, **kwargs)
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
+    ax.grid()
+    fig.canvas.mpl_connect('pick_event', onpick)
+
+    return fig, ax
+

@@ -3,13 +3,12 @@ import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 
 from dedalus_sphere import jacobi as Jacobi
-from eigtools import eigsort, discard_spurious_eigenvalues
+from eigtools import eigsort, plot_spectrum, discard_spurious_eigenvalues
 import os
 import pickle
 import greenspan_inertial_waves as greenspan
 
 import spherinder as sph
-from spectrum_plot import SpectrumPlot
 
 g_alpha_p = 2
 g_alpha_T = 0
@@ -444,20 +443,26 @@ def expand_evectors(Lmax, Nmax, boundary_method, vec, bases, bound):
     return u, v, w, p, T, tau
 
 
-def spectrum_plot_callback(index, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound):
-    evector = evectors[:,index]
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound):
+    evalue, evector = evalues[index], evectors[:,index]
     u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, boundary_method, evector, bases, bound)
 
-    field_indices = [0,2,4]
+    field_indices = [0,2,3,4]
     fields = [u,v,w,p,T]
     field_names = ['u','v','w','p','T']
 
-    fig, ax = plt.subplots(1,len(field_indices),figsize=(9,4))
+    fig, ax = plt.subplots(1,len(field_indices),figsize=(13,4.5))
     for i in range(len(field_indices)):
         field_index = field_indices[i]
-        f = fields[field_index].real
-        sph.plotfield(s, eta, f, fig=fig, ax=ax[i])
+        f = fields[field_index]
+        sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i])
         ax[i].set_title(r'${}$'.format(field_names[field_index]))
+
+        if field_index in [0,1,2,4]:
+            error = max(np.linalg.norm(f[0,:]), np.linalg.norm(f[-1,:]))
+            print('Boundary error, {}: {}'.format(field_names[field_index], error))
+
+    fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
     fig.show()
 
 
@@ -469,25 +474,27 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    ns, neta = 256, 255
-    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases, bound = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    callback = lambda index: spectrum_plot_callback(index, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound)
+    if plot_fields:
+        ns, neta = 256, 255
+        s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+        bases, bound = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+        callback = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound)
+    else:
+        callback = None
 
-    spectrum_plot = SpectrumPlot(evalues, callback)
-    spectrum_plot.plot()
-    spectrum_plot.ax.set_title('Boussinesq Eigenvalues')
-    spectrum_plot.ax.set_xlabel('Real(λ)')
-    spectrum_plot.ax.set_ylabel('Imag(λ)')
+    fig, ax = plot_spectrum(evalues, callback)
+    ax.set_title('Boussinesq Eigenvalues')
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
 
-    plt.show()
+    fig.show()
 
 
 def rotation_configs():
     return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 36},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
             {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 12, 'Nmax': 24},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
@@ -511,6 +518,7 @@ def main():
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}, Prandtl = {Prandtl}, Rayleigh = {Rayleigh:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
+    print('  Boundary method = ' + boundary_method)
 
     if solve:
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy)
