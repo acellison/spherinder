@@ -391,27 +391,23 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
 
 def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     if boundary_method == 'galerkin':
-        Lout, Nout = Lmax+2, Nmax+1
-        Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
-        Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
-        Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
-        BoundT = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1+g_alpha_T, sigma=0)
-        bound = {'up':Boundp, 'um':Boundm, 'uz':Boundz, 'T':BoundT}
+        basis_fun = sph.phi
+        dalpha = 1
     else:
-        Lout, Nout = Lmax, Nmax
-        bound = None
+        basis_fun = sph.psi
+        dalpha = 0
 
-    upbasis = [sph.psi(Nout, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lout)]
-    umbasis = [sph.psi(Nout, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lout)]
-    uzbasis = [sph.psi(Nout, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lout)]
-    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
-    Tbasis  = [sph.psi(Nout, m, ell, s, eta, sigma= 0, alpha=g_alpha_T) for ell in range(Lout)]
+    upbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=+1, alpha=1+dalpha) for ell in range(Lmax)]
+    umbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=-1, alpha=1+dalpha) for ell in range(Lmax)]
+    uzbasis = [basis_fun(Nmax, m, ell, s, eta, sigma= 0, alpha=1+dalpha) for ell in range(Lmax)]
+    pbasis  = [  sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
+    Tbasis  = [basis_fun(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_T+dalpha) for ell in range(Lmax)]
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis, 'T':Tbasis}
 
-    return bases, bound
+    return bases
 
 
-def expand_evectors(Lmax, Nmax, boundary_method, vec, bases, bound):
+def expand_evectors(Lmax, Nmax, vec, bases):
     ncoeff = Lmax*Nmax
 
     # Get the grid space vector fields
@@ -423,29 +419,20 @@ def expand_evectors(Lmax, Nmax, boundary_method, vec, bases, bound):
     tau = vec[5*ncoeff:]
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
-    if boundary_method == 'galerkin':
-        Lout, Nout = Lmax+2, Nmax+1
-        upcoeff = bound['up'] @ upcoeff
-        umcoeff = bound['um'] @ umcoeff
-        uzcoeff = bound['uz'] @ uzcoeff
-        Tcoeff = bound['T'] @ Tcoeff
-    else:
-        Lout, Nout = Lmax, Nmax
-
     # Convert to grid space
-    up = sph.expand(bases['up'], upcoeff.reshape((Lout,Nout)))
-    um = sph.expand(bases['um'], umcoeff.reshape((Lout,Nout)))
-    uz = sph.expand(bases['uz'], uzcoeff.reshape((Lout,Nout)))
+    up = sph.expand(bases['up'], upcoeff.reshape((Lmax,Nmax)))
+    um = sph.expand(bases['um'], umcoeff.reshape((Lmax,Nmax)))
+    uz = sph.expand(bases['uz'], uzcoeff.reshape((Lmax,Nmax)))
     p  = sph.expand(bases['p'],   pcoeff.reshape((Lmax,Nmax)))
-    T  = sph.expand(bases['T'],   Tcoeff.reshape((Lout,Nout)))
+    T  = sph.expand(bases['T'],   Tcoeff.reshape((Lmax,Nmax)))
     u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
     return u, v, w, p, T, tau
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound):
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     evalue, evector = evalues[index], evectors[:,index]
-    u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, boundary_method, evector, bases, bound)
+    u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, evector, bases)
 
     field_indices = [0,2,3,4]
     fields = [u,v,w,p,T]
@@ -477,8 +464,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
     if plot_fields:
         ns, neta = 256, 255
         s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-        bases, bound = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-        callback = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound)
+        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+        callback = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
     else:
         callback = None
 
