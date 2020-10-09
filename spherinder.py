@@ -13,17 +13,17 @@ def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', interna
     s = s.astype(internal)
     t = 2*s**2 - 1
 
-    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=internal)[-1,:].reshape(neta,1)
+    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=internal)[-1,:][:,np.newaxis]
     Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-    tt = t.reshape(1,ns)
+    tt = t[np.newaxis,:]
     return [(Peta * (1+tt)**((m+sigma)/2) * (1-tt)**(ell/2) * Ps[k,:]).astype(dtype) for k in range(Nmax)]
 
 
 def phi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
     """Galerkin basis function"""
     ns, neta = len(s), len(eta)
-    ee = eta.astype(internal).reshape(neta,1)
-    ss = s.astype(internal).reshape(1,ns)
+    ss = s.astype(internal)[np.newaxis,:]
+    ee = eta.astype(internal)[:,np.newaxis]
     scale = (1-ee**2) * (1-ss**2)
     psi_basis = psi(Nmax, m, ell, s, eta, sigma=sigma, alpha=alpha, beta=beta, dtype=dtype, internal=internal)
     return [scale * p for p in psi_basis]
@@ -41,20 +41,19 @@ def expand(basis, coeffs):
 def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal'):
     """Plot a 2D slice of the field at phi = 0"""
     s, eta = s.ravel(), eta.ravel()
-    ss = np.reshape(s,(1,len(s)))
-    ee = np.reshape(eta,(len(eta),1))
-    zz = np.sqrt(1-ss**2)*ee
-    y = ee if stretch else zz
+    ss = s[np.newaxis,:]
+    ee = eta[:,np.newaxis]
+    if stretch:
+        y = ee
+    else:
+        y = np.sqrt(1-ss**2)*ee
     
     if fig is None or ax is None:
         fig, ax = plt.subplots(figsize=(4.25,6))
     im = ax.pcolormesh(ss, y, f, cmap='RdBu')
     fig.colorbar(im, ax=ax)
     ax.set_xlabel('s')
-    if stretch:
-        ax.set_ylabel('η')
-    else:
-        ax.set_ylabel('z')
+    ax.set_ylabel('η' if stretch else 'z')
     if aspect is not None:
         ax.set_aspect(aspect, adjustable='box')
     fig.set_tight_layout(True)
