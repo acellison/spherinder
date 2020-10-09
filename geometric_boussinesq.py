@@ -9,7 +9,7 @@ import pickle
 import greenspan_inertial_waves as greenspan
 
 import spherinder as sph
-from eigplot import SpectrumPlot
+from spectrum_plot import SpectrumPlot
 
 g_alpha_p = 2
 g_alpha_T = 0
