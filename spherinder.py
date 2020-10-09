@@ -7,16 +7,26 @@ from dedalus_sphere import operators
 from config import internal_dtype
 
 
-def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64'):
-    """Basis function for our fields"""
+def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
+    """Orthogonal basis function"""
     ns, neta = len(s), len(eta)
-    s = s.astype(dtype)
+    s = s.astype(internal)
     t = 2*s**2 - 1
 
-    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=dtype)[-1,:].reshape(neta,1)
-    Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=dtype)
+    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=internal)[-1,:].reshape(neta,1)
+    Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
     tt = t.reshape(1,ns)
-    return [Peta * (1+tt)**((m+sigma)/2) * (1-tt)**(ell/2) * Ps[k,:] for k in range(Nmax)]
+    return [(Peta * (1+tt)**((m+sigma)/2) * (1-tt)**(ell/2) * Ps[k,:]).astype(dtype) for k in range(Nmax)]
+
+
+def phi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
+    """Galerkin basis function"""
+    ns, neta = len(s), len(eta)
+    ee = eta.astype(internal).reshape(neta,1)
+    ss = s.astype(internal).reshape(1,ns)
+    scale = (1-ee**2) * (1-ss**2)
+    psi_basis = psi(Nmax, m, ell, s, eta, sigma=sigma, alpha=alpha, beta=beta, dtype=dtype, internal=internal)
+    return [scale * p for p in psi_basis]
 
 
 def expand(basis, coeffs):
@@ -326,6 +336,27 @@ class RadialMultiplication(Operator):
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
 
+class OneMinusRadiusSquared(Operator):
+    """Multiply a field by (1-r**2)"""
+    def __init__(self, dtype='float64'):
+        codomain = Codomain(+2,+1,-1)
+        Operator.__init__(self, codomain=codomain, dtype=dtype)
+
+    def __call__(self, m, Lmax, Nmax, alpha, sigma):
+        opz = (A(-1) @ B(-1))(Lmax,alpha,alpha).todense()
+        zmat = np.diag(np.diag(opz))
+        smats = [A(-1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
+        Op1 = make_operator(zmat, smats, Lmax=Lmax+2)
+
+        zmat = np.diag(np.diag(opz,-2),-2)[:,:Lmax]
+        smats = [A(+1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
+        Op2 = make_operator(zmat, smats, Nmax=Nmax+1)
+
+        Op = 1/2*(Op1 + Op2)
+
+        return Op.astype(self.dtype)
+
+
 class Gradient(Operator):
     """Compute the gradient of a scalar field"""
     def __init__(self, dtype='float64'):
@@ -527,6 +558,8 @@ def operator(name, field=None, dtype='float64'):
         return op
     if name == 'rtimes':
         return RadialMultiplication(dtype=dtype)
+    if name == '1-r**2':
+        return OneMinusRadiusSquared(dtype=dtype)
     if name == 'erdot':
         return RadialVector(dtype=dtype)
     if name == 'boundary':

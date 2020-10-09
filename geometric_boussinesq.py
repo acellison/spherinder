@@ -9,13 +9,14 @@ import pickle
 import greenspan_inertial_waves as greenspan
 
 import spherinder as sph
+from eigplot import SpectrumPlot
 
 g_alpha_p = 2
 g_alpha_T = 0
 
 
-def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
-    """Construct matrices for X = [i*u(+), i*u(-), i*w, p]
+def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
+    """Construct matrices for X = [u(+), u(-), u(z), p, T]
     """
     alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
     ncoeff = Lmax*Nmax
@@ -183,6 +184,162 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
     return M, L
 
 
+def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
+    """Construct matrices for X = [u(+), u(-), u(z), p, T]
+    """
+    alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
+
+    Lout, Nout = Lmax+2, Nmax+1
+    ncoeff = Lout*Nout
+    ncoeff0 = Lmax*Nmax
+
+    # Galerkin conversion operators
+    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
+    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
+    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
+    BoundT = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1+g_alpha_T, sigma=0)
+
+    # Scalar laplacian
+    LapT = sph.operator('lap')(m, Lout, Nout, alpha=g_alpha_T)
+    LapT = sph.resize(LapT, Lout, Nout+1, Lout, Nout)
+
+    # Vector laplacian
+    Lapp, Lapm, Lapz = sph.operator('lap', 'vec')(m, Lout, Nout, alpha=1)
+    Lapp = sph.resize(Lapp, Lout, Nout+1, Lout, Nout)
+    Lapm = sph.resize(Lapm, Lout, Nout+1, Lout, Nout)
+    Lapz = sph.resize(Lapz, Lout, Nout+1, Lout, Nout)
+
+    # Vector divergence operator
+    Div = sph.operator('div')(m, Lout, Nout, alpha=1)
+    Div = sph.resize(Div, Lout, Nout+1, Lout, Nout)      # truncate Div . e(+)^* . u
+    Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
+
+    # Pressure gradient
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=g_alpha_p)
+    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, truncate=False)
+    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, truncate=False)
+    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  truncate=False)
+    Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
+    Gradp = sph.resize(Gradp, Lmax,   Nmax+1, Lout, Nout)
+    Gradm = sph.resize(Gradm, Lmax,   Nmax+2, Lout, Nout)
+    Gradz = sph.resize(Gradz, Lmax-1, Nmax+1, Lout, Nout)
+
+    # Radial vector extraction
+    Rad = sph.operator('erdot')(m, Lout, Nout, alpha=1)
+    Cr = sph.convert_alpha(1+g_alpha_T, m, Lout+1, Nout+1, alpha=1, sigma=0, truncate=False)
+    Rad = Cr @ Rad
+    Rad = sph.resize(Rad, Lout+1, Nout+2, Lout, Nout)
+    Radp, Radm, Radz = Rad[:,:ncoeff], Rad[:,ncoeff:2*ncoeff], Rad[:,2*ncoeff:]
+
+    # Radial vector multiplication r e_r * T, convert from alpha=1 to alpha=3
+    RTp, RTm, RTz = sph.operator('rtimes')(m, Lout, Nout, alpha=g_alpha_T)
+    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+1, alpha=1+g_alpha_T, sigma=+1, truncate=False)
+    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+2, alpha=1+g_alpha_T, sigma=-1, truncate=False)
+    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lout+1, Nout+2, alpha=1+g_alpha_T, sigma=0,  truncate=False)
+    RTp, RTm, RTz = CrTp @ RTp, CrTm @ RTm, CrTz @ RTz
+    RTp = sph.resize(RTp, Lout,   Nout+2, Lout, Nout)
+    RTm = sph.resize(RTm, Lout,   Nout+3, Lout, Nout)
+    RTz = sph.resize(RTz, Lout+1, Nout+3, Lout, Nout)
+
+    # Conversion matrices
+    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, truncate=True)
+    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, truncate=True)
+    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0, truncate=True)
+    CT = sph.convert_alpha(2, m, Lout, Nout, alpha=g_alpha_T, sigma=0, truncate=True)
+    
+    # Time derivative matrices
+    M00 = Ekman * Cp @ Boundp
+    M11 = Ekman * Cm @ Boundm
+    M22 = Ekman * Cz @ Boundz
+    M33 = sparse.lil_matrix((ncoeff,ncoeff0))
+    M44 = Prandtl * CT @ BoundT
+
+    # i*u+ equation - spin+ velocity component
+    L00 = (-1j * Cp + Ekman * Lapp) @ Boundp
+    L01 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L02 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L03 = -Gradp
+    L04 = Rayleigh * RTp @ BoundT
+
+    # i*u- equation - spin- velocity component
+    L10 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L11 = (1j * Cm + Ekman * Lapm) @ Boundm
+    L12 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L13 = -Gradm
+    L14 = Rayleigh * RTm @ BoundT
+
+    # i*w equation - vertical velocity component
+    L20 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L21 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L22 = Ekman * Lapz @ Boundz
+    L23 = -Gradz
+    L24 = Rayleigh * RTz @ BoundT
+
+    # Divergence equation
+    L30 = Divp @ Boundp
+    L31 = Divm @ Boundm
+    L32 = Divz @ Boundz
+    L33 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L34 = sparse.lil_matrix((ncoeff,ncoeff0))
+
+    # Temperature equation
+    L40 = Prandtl * Radp @ Boundp
+    L41 = Prandtl * Radm @ Boundm
+    L42 = Prandtl * Radz @ Boundz
+    L43 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L44 = LapT @ BoundT
+
+    Mmats = [M00, M11, M22, M33, M44]
+    upmats = [L00, L01, L02, L03, L04]
+    ummats = [L10, L11, L12, L13, L14]
+    uzmats = [L20, L21, L22, L23, L24]
+    pmats = [L30, L31, L32, L33, L34]
+    Tmats = [L40, L41, L42, L43, L44]
+
+    sparse_format = 'lil'
+    M = sparse.block_diag(Mmats, format=sparse_format)
+    L = sparse.bmat([upmats, ummats, uzmats, pmats, Tmats], format=sparse_format)
+
+    # Tau polynomials
+    def tau_polynomials():
+        def make_tau_column(a,b,c,d,e):
+            return sparse.bmat([[  a,0*b,0*c,0*d,0*e],
+                                [0*a,  b,0*c,0*d,0*e],
+                                [0*a,0*b,  c,0*d,0*e],
+                                [0*a,0*b,0*c,  d,0*e],
+                                [0*a,0*b,0*c,0*d,  e]])
+        hstack = sparse.hstack
+
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, truncate=True)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, truncate=True)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, truncate=True)
+        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lout, Nout, alpha=alpha_bc_T, sigma=0, truncate=True)
+
+        taup1, taum1, tauz1, taus1, tauT1 = Taup[:,Nout-1:-2*Nout:Nout], Taum[:,Nout-1:-2*Nout:Nout], Tauz[:,Nout-1:-2*Nout:Nout], \
+                                            Taus[:,Nout-1:-2*Nout:Nout], TauT[:,Nout-1:-2*Nout:Nout]
+        taup2, taum2, tauz2, taus2, tauT2 = Taup[:,-2*Nout:], Taum[:,-2*Nout:], Tauz[:,-2*Nout:], \
+                                            Taus[:,-2*Nout:], TauT[:,-2*Nout:]
+ 
+        col = make_tau_column(hstack([taup1,taup2]), hstack([taum1,taum2]), hstack([tauz1,tauz2]), \
+                              hstack([taus1,taus2]), hstack([tauT1,tauT2]))
+        return col
+
+    col = tau_polynomials()
+
+    L = sparse.hstack([L,  col], format='csr')
+    M = sparse.hstack([M,0*col], format='csr')
+
+    return M, L
+
+
+def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
+    if boundary_method in ['tau', 'galerkin']:
+        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh)
+    else:
+        raise ValueError('Unsupported boundary method')
+
+
 def checkdir(filename):
     filename = os.path.abspath(filename)
     path = os.path.dirname(filename)
@@ -210,11 +367,10 @@ def pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, di
     return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}.pckl'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy):
     # Construct the system
     M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
 
-    plot_spy = False
     if plot_spy:
         fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
         plot_axes[0].spy(L)
@@ -234,16 +390,30 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     savedata(filename, data)
 
 
-def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
-    z = 2*s**2 - 1
+def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
+    if boundary_method == 'galerkin':
+        Lout, Nout = Lmax+2, Nmax+1
+        Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
+        Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
+        Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
+        BoundT = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1+g_alpha_T, sigma=0)
+        bound = {'up':Boundp, 'um':Boundm, 'uz':Boundz, 'T':BoundT}
+    else:
+        Lout, Nout = Lmax, Nmax
+        bound = None
 
-    ncoeff = Lmax*Nmax
-
-    upbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
-    umbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
-    uzbasis = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
+    upbasis = [sph.psi(Nout, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lout)]
+    umbasis = [sph.psi(Nout, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lout)]
+    uzbasis = [sph.psi(Nout, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lout)]
     pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
-    Tbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_T) for ell in range(Lmax)]
+    Tbasis  = [sph.psi(Nout, m, ell, s, eta, sigma= 0, alpha=g_alpha_T) for ell in range(Lout)]
+    bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis, 'T':Tbasis}
+
+    return bases, bound
+
+
+def expand_evectors(Lmax, Nmax, boundary_method, vec, bases, bound):
+    ncoeff = Lmax*Nmax
 
     # Get the grid space vector fields
     upcoeff = vec[:ncoeff] 
@@ -252,22 +422,46 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     pcoeff = vec[3*ncoeff:4*ncoeff]
     Tcoeff = vec[4*ncoeff:5*ncoeff]
     tau = vec[5*ncoeff:]
+    print('Tau norm: {}'.format(np.linalg.norm(tau)))
+
+    if boundary_method == 'galerkin':
+        Lout, Nout = Lmax+2, Nmax+1
+        upcoeff = bound['up'] @ upcoeff
+        umcoeff = bound['um'] @ umcoeff
+        uzcoeff = bound['uz'] @ uzcoeff
+        Tcoeff = bound['T'] @ Tcoeff
+    else:
+        Lout, Nout = Lmax, Nmax
 
     # Convert to grid space
-    up = sph.expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
-    um = sph.expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
-    uz = sph.expand(uzbasis, np.reshape(uzcoeff, (Lmax,Nmax)))
-    p  = sph.expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
-    T  = sph.expand( Tbasis, np.reshape( Tcoeff, (Lmax,Nmax)))
+    up = sph.expand(bases['up'], upcoeff.reshape((Lout,Nout)))
+    um = sph.expand(bases['um'], umcoeff.reshape((Lout,Nout)))
+    uz = sph.expand(bases['uz'], uzcoeff.reshape((Lout,Nout)))
+    p  = sph.expand(bases['p'],   pcoeff.reshape((Lmax,Nmax)))
+    T  = sph.expand(bases['T'],   Tcoeff.reshape((Lout,Nout)))
     u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
     return u, v, w, p, T, tau
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields):
-    save_plots = True
-    plot_field_indices = [0,2,4]
+def spectrum_plot_callback(index, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound):
+    evector = evectors[:,index]
+    u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, boundary_method, evector, bases, bound)
 
+    field_indices = [0,2,4]
+    fields = [u,v,w,p,T]
+    field_names = ['u','v','w','p','T']
+
+    fig, ax = plt.subplots(1,len(field_indices),figsize=(9,4))
+    for i in range(len(field_indices)):
+        field_index = field_indices[i]
+        f = fields[field_index].real
+        sph.plotfield(s, eta, f, fig=fig, ax=ax[i])
+        ax[i].set_title(r'${}$'.format(field_names[field_index]))
+    fig.show()
+
+
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields):
     # Load the data
     filename = pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     data = pickle.load(open(filename, 'rb'))
@@ -275,79 +469,42 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    if save_plots:
-        def save(fn): savefig(fn)
-    else:
-        def save(_): pass
-
-    evalue_target = omega
-    configstr = f'-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}'
-    prefix = filename_prefix('figures')
-
-    # Plot the eigenvalues
-    if plot_evalues:
-        fig, ax = plt.subplots()
-        ax.plot(evalues.real, evalues.imag, '.')
-        ax.grid()
-        ax.set_xlabel('Real(λ)')
-        ax.set_ylabel('Imag(λ)')
-        ax.set_title('Linear Onset Eigenvalues in the Stretched Sphere')
-        fig.set_tight_layout(True)
-
-        filename = prefix + configstr + '-evalues.png'
-        save(filename)
-
-    if not plot_fields:
-        return
-
-    # Get the target eigenpair
-    index = np.argmin(abs(evalues - evalue_target))
-    val, vec = evalues[index], evectors[:,index]
-
-    print('Omega target: {:1.4f}'.format(omega))
-    print('Plotting eigenvector with eigenvalue {:1.4f}'.format(val))
-
-    # Construct the basis polynomials
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    u, v, w, p, T, tau = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
+    bases, bound = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+    callback = lambda index: spectrum_plot_callback(index, evectors, Lmax, Nmax, boundary_method, s, eta, bases, bound)
 
-    fields = [u,v,w,p,T]
-    field_names = ['u','v','w','p','T']
+    spectrum_plot = SpectrumPlot(evalues, callback)
+    spectrum_plot.plot()
+    spectrum_plot.ax.set_title('Boussinesq Eigenvalues')
+    spectrum_plot.ax.set_xlabel('Real(λ)')
+    spectrum_plot.ax.set_ylabel('Imag(λ)')
 
-    for i in range(len(plot_field_indices)):
-        field_index = plot_field_indices[i]
-        Fgrid = fields[field_index]
-        relative_real = np.linalg.norm(np.real(Fgrid))/np.linalg.norm(Fgrid)
-        f = Fgrid.real if relative_real > 0.5 else Fgrid.imag
-
-        sph.plotfield(s, eta, f)
-        plt.title(r'${}$'.format(field_names[field_index]))
-        filename = prefix + configstr + '-evector-' + field_names[field_index] + '.png'
-        save(filename)
+    plt.show()
 
 
 def rotation_configs():
     return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 28},
-            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 12, 'Nmax': 20},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 32},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 36},
             {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 12, 'Nmax': 24},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 12, 'Nmax': 40}]
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 20, 'Nmax': 40}]
 
 def main():
-    solve = True
+    solve = False
+    plot_spy = False
     plot_evalues = True
     plot_fields = True
+    boundary_method = 'galerkin'
 
-    config_index = 2
+    config_index = 3
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
     Lmax, Nmax = config['Lmax'], config['Nmax']
-    boundary_method = 'tau'
 
     omega = 1j*omega/Ekman**(2/3)
     Rayleigh /= Ekman**(1/3)
@@ -356,7 +513,7 @@ def main():
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy)
 
     if plot_fields or plot_evalues:
         plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields)
@@ -364,24 +521,24 @@ def main():
 
 
 def analyze_evalues():
-    config_index = 2
+    config_index = 3
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
-    Lmax, Nmax = config['Lmax'], config['Nmax']
-    boundary_method = 'tau'
+    boundary_method = 'galerkin'
 
     omega = 1j*omega/Ekman**(2/3)
     Rayleigh /= Ekman**(1/3)
 
-    Nlores, Nhires = 28, 32
+    Llores, Nlores = 20, 32
+    Lhires, Nhires = 20, 40
 
-    def load_evalues(N):
-        filename = pickle_filename(m, Lmax, N, boundary_method, Ekman, Prandtl, Rayleigh)
+    def load_evalues(L, N):
+        filename = pickle_filename(m, L, N, boundary_method, Ekman, Prandtl, Rayleigh)
         data = pickle.load(open(filename, 'rb'))
         return data['evalues']
         
-    evalues_lores, evalues_hires = load_evalues(Nlores), load_evalues(Nhires)
+    evalues_lores, evalues_hires = load_evalues(Llores, Nlores), load_evalues(Lhires, Nhires)
     evalues = discard_spurious_eigenvalues(evalues_lores, evalues_hires, cutoff=1e6, plot=True)
 
     print('Number of good eigenvalues: {}/{}'.format(len(evalues), len(evalues_lores)))

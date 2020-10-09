@@ -37,7 +37,7 @@ def analytic_evalues(m, L, N):
     return [dispersion_zeros(m+ell, N) for ell in range(L)]
 
 
-def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
+def matrices_tau(m, Lmax, Nmax, truncate=True):
     """Construct matrices for Bessel's eigenproblem, Lap(f) + λ f = 0
     """
     alpha = 0
@@ -104,6 +104,37 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate=True):
     return M, L
 
 
+def matrices_galerkin(m, Lmax, Nmax, truncate=True):
+    alpha_bc = 1
+    Lout, Nout = Lmax+2, Nmax+1
+
+    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, truncate=truncate)
+    L = sph.operator('laplacian')(m, Lout, Nout, alpha=0)
+    if truncate:
+        L = sph.resize(L, Lout, Nout+1, Lout, Nout)
+
+    # Multiplication by 1-r**2 lowers alpha by 1
+    Bound = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
+
+    M = M @ Bound
+    L = L @ Bound
+
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=truncate)
+    col1, col2 = Conv[:,Nout-1:-2*Nout:Nout], Conv[:,-2*Nout:]
+
+    L = sparse.hstack([L,  col1,  col2])
+    M = sparse.hstack([M,0*col1,0*col2])
+
+    return M, L
+
+
+def matrices(m, Lmax, Nmax, boundary_method):
+    if boundary_method in ['tau', 'galerkin']:
+        return eval('matrices_' + boundary_method)(m, Lmax, Nmax)
+    else:
+        raise ValueError('Unsupported boundary method')
+
+
 def checkdir(filename):
     filename = os.path.abspath(filename)
     path = os.path.dirname(filename)
@@ -161,12 +192,18 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     ncoeff = Lmax*Nmax
     fcoeff = vec[:ncoeff].real.reshape((Lmax,Nmax)).astype(dtype)
     tau = vec[ncoeff:]
+    print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
     # Convert to grid space
+    if boundary_method == 'galerkin':
+        Conv = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
+        Lmax = Lmax+2
+        Nmax = Nmax+1
+        fcoeff = (Conv @ fcoeff.ravel()).reshape(Lmax, Nmax)
+
     basis = [sph.psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, dtype=dtype) for ell in range(Lmax)]
     f = sph.expand(basis, fcoeff)
 
-#    f /= np.max(abs(f))
     return f, tau
 
 
@@ -206,8 +243,13 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     else:
         def save(_): pass
 
-    evalue_target = 49.14**2
-#    evalue_target = 112.60858**2
+    if m == 10:
+        evalue_target = 49.14**2
+    elif m == 30:
+        kappa_for_mode = {10: 75.42894, 16: 95.62605, 20: 108.79477, 24: 121.82663, 30: 141.20734}
+        evalue_target = kappa_for_mode[24]**2
+    else:
+        evalue_target = 100
     configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
     prefix = filename_prefix('figures')
 
@@ -215,7 +257,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     nimag = len(np.where(np.abs(evalues.imag) > 1e-15)[0])
     print(f'Number of complex eigenvalues: {nimag}/{ntotal}')
 
-    check_boundary(m, Lmax, Nmax, evalues, evectors)
+    if boundary_method == 'tau':
+        check_boundary(m, Lmax, Nmax, evalues, evectors)
 
     # Plot the eigenvalues
     if plot_evalues:
@@ -268,15 +311,15 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
 
 def main():
-    solve = True
+    solve = False
     plot_evalues = True
     plot_fields = True
 
-    m = 10
-    Lmax, Nmax = 20, 30
-    boundary_method = 'tau'
+    m = 30
+    Lmax, Nmax = 60, 60
+    boundary_method = 'galerkin'
 
-    print('Bessel Eigenproblem, m = {}'.format(m))
+    print('Bessel Eigenproblem, m = {}, boundary method = {}'.format(m, boundary_method))
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
 
     if solve:
