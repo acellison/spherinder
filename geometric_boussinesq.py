@@ -2,12 +2,10 @@ import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 
-from dedalus_sphere import jacobi as Jacobi
-from eigtools import eigsort, plot_spectrum, discard_spurious_eigenvalues
 import os
 import pickle
-import greenspan_inertial_waves as greenspan
 
+from eigtools import eigsort, plot_spectrum, discard_spurious_eigenvalues
 import spherinder as sph
 
 g_alpha_p = 2
@@ -357,7 +355,9 @@ def savefig(filename):
     
 
 def filename_prefix(directory='data'):
-    basepath = os.path.join(os.path.dirname(__file__), directory)
+    basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
+    if not os.path.exists(basepath):
+        os.mkdir(basepath)
     prefix = 'geometric_linear_onset'
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
@@ -453,7 +453,7 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields):
     # Load the data
     filename = pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     data = pickle.load(open(filename, 'rb'))
@@ -465,14 +465,18 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
         ns, neta = 256, 255
         s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
         bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-        callback = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
     else:
-        callback = None
+        onpick = None
 
-    fig, ax = plot_spectrum(evalues, callback)
+    fig, ax = plot_spectrum(evalues, onpick)
     ax.set_title('Boussinesq Eigenvalues')
     ax.set_xlabel('Real(λ)')
     ax.set_ylabel('Imag(λ)')
+
+    plot_filename_prefix = pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures')[:-5]
+    plot_filename = plot_filename_prefix + '.png'
+    plt.savefig(plot_filename)
 
     fig.show()
 
@@ -480,12 +484,12 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omeg
 def rotation_configs():
     return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 16, 'Nmax': 32},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 40},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 12, 'Nmax': 24},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 60, 'Nmax': 60},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 20, 'Nmax': 40}]
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 60, 'Nmax': 60}]
 
 def main():
     solve = False
@@ -494,13 +498,12 @@ def main():
     plot_fields = True
     boundary_method = 'galerkin'
 
-    config_index = 3
+    config_index = 7
     config = rotation_configs()[config_index]
 
-    m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
+    m, Ekman, Prandtl, Rayleigh = config['m'], config['Ekman'], 1, config['Rayleigh']
     Lmax, Nmax = config['Lmax'], config['Nmax']
 
-    omega = 1j*omega/Ekman**(2/3)
     Rayleigh /= Ekman**(1/3)
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}, Prandtl = {Prandtl}, Rayleigh = {Rayleigh:1.4e}')
@@ -511,12 +514,12 @@ def main():
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_evalues, plot_fields)
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields)
         plt.show()
 
 
 def analyze_evalues():
-    config_index = 3
+    config_index = 4
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
@@ -525,27 +528,32 @@ def analyze_evalues():
     omega = 1j*omega/Ekman**(2/3)
     Rayleigh /= Ekman**(1/3)
 
-    Llores, Nlores = 20, 32
-    Lhires, Nhires = 20, 40
+    Llores, Nlores = 48, 48
+    Lhires, Nhires = 52, 52
 
     def load_evalues(L, N):
         filename = pickle_filename(m, L, N, boundary_method, Ekman, Prandtl, Rayleigh)
         data = pickle.load(open(filename, 'rb'))
-        return data['evalues']
+        return data['evalues'], data['evectors']
         
-    evalues_lores, evalues_hires = load_evalues(Llores, Nlores), load_evalues(Lhires, Nhires)
-    evalues = discard_spurious_eigenvalues(evalues_lores, evalues_hires, cutoff=1e6, plot=True)
+    evalues_lores, evectors_lores = load_evalues(Llores, Nlores)
+    evalues_hires, _ = load_evalues(Lhires, Nhires)
+    evalues, indices = discard_spurious_eigenvalues(evalues_lores, evalues_hires, cutoff=1e4, plot=True)
+    evectors = evectors_lores[:,indices]
 
     print('Number of good eigenvalues: {}/{}'.format(len(evalues), len(evalues_lores)))
 
-    fig, ax = plt.subplots()
-    ax.plot(evalues.real, evalues.imag, '.', markersize=2)
-    ax.grid()
-    ax.set_xlabel('Real(λ)')
-    ax.set_ylabel('Imag(λ)')
-    ax.set_title('Linear Onset Eigenvalues in the Stretched Sphere')
-    fig.set_tight_layout(True)
+    if True:
+        Lmax, Nmax = Llores, Nlores
+        ns, neta = 256, 255
+        s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
+    else:
+        onpick = None
 
+    fig, ax = plot_spectrum(evalues, onpick)
+    ax.set_title('Resolved Boussinesq Eigenvalues')
     plt.show()
 
 

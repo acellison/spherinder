@@ -194,13 +194,14 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
         plt.legend()
 
     # Discard eigenvalues with 1/delta_near < cutoff
-    goodevals = lambda1[1 / delta_near > cutoff]
+    indices = np.asarray(1/delta_near > cutoff).nonzero()[0]
+    goodevals = lambda1[indices]
 
-    return goodevals
+    return goodevals, indices
 
 
-def plot_spectrum(evalues, callback=None, *args, **kwargs):
-    def onpick(event):
+def plot_spectrum(evalues, onpick=None, *args, **kwargs):
+    def onpick_callback(event):
         thisline = event.artist
         xdata = thisline.get_xdata()
         ydata = thisline.get_ydata()
@@ -209,9 +210,9 @@ def plot_spectrum(evalues, callback=None, *args, **kwargs):
         evalue = point[0] + 1j*point[1]
         print('selected eigenvalue: {}'.format(evalue))
 
-        if callback is not None:
+        if onpick is not None:
             index = np.argmin(np.abs(evalues-evalue))
-            callback(index)
+            onpick(index)
         return True
 
     fig, ax = plt.subplots()
@@ -219,7 +220,7 @@ def plot_spectrum(evalues, callback=None, *args, **kwargs):
     ax.set_xlabel('Real(λ)')
     ax.set_ylabel('Imag(λ)')
     ax.grid()
-    fig.canvas.mpl_connect('pick_event', onpick)
+    fig.canvas.mpl_connect('pick_event', onpick_callback)
 
     return fig, ax
 

@@ -2,12 +2,11 @@ import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 
-from eigtools import eigsort
 import os
 import pickle
 
 from dedalus_sphere import jacobi as Jacobi
-
+from eigtools import eigsort
 import config
 config.internal_dtype = 'float64'
 import spherinder as sph

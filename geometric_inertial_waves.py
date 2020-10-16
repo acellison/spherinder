@@ -1,15 +1,16 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
-import spherinder as sph
 
-from eigtools import eigsort
 import os
 import pickle
+
 import greenspan_inertial_waves as greenspan
+from eigtools import eigsort
 
 import config
 config.internal_dtype = 'float64'
+import spherinder as sph
 
 
 def matrices(m, Lmax, Nmax, boundary_method):
