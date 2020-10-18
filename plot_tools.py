@@ -90,6 +90,8 @@ def plotsurface(theta,phi,u):
     cbar = fig.colorbar(collec, cax=cbar_axes, orientation='horizontal', ticks=MaxNLocator(nbins=nbins))
     cbar.ax.tick_params(labelsize=8)
 
+    return fig, plot_axes
+
 
 def plotequatorialquiver(ux, uy, r, theta, phi):
     num = 1
@@ -120,6 +122,8 @@ def plotequatorialquiver(ux, uy, r, theta, phi):
     plot_axes.set_axis_off()
     plot_axes.axis([-1 - 2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
 
+    return fig, plot_axes
+
 
 def plotmeridionalquiver(ux, uz, r, theta, phi, angle=0., cmap=None):
     num = 1
@@ -143,6 +147,8 @@ def plotmeridionalquiver(ux, uz, r, theta, phi, angle=0., cmap=None):
     plot_axes.quiver(x, y, vx, vz, scale=32)
     plot_axes.set_axis_off()
     plot_axes.axis([-2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
+
+    return fig, plot_axes
 
 
 def plotequatorialslice(field, r, theta, phi, cmap=None):
@@ -182,6 +188,8 @@ def plotequatorialslice(field, r, theta, phi, cmap=None):
     nbins = 4
     cbar = fig.colorbar(c_im, cax=cbar_axes, orientation='horizontal', ticks=MaxNLocator(nbins=nbins))
     cbar.ax.tick_params(labelsize=8)
+
+    return fig, plot_axes
 
 
 def plotmeridionalslice(field, r, theta, phi, angle=0., stretch=False, cmap=None):
@@ -233,6 +241,8 @@ def plotmeridionalslice(field, r, theta, phi, angle=0., stretch=False, cmap=None
     plot_axes.axis([-1 - 2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
     cbar = fig.colorbar(c_im, cax=cbar_axes, orientation='horizontal', ticks=MaxNLocator(nbins=nbins))
     cbar.ax.tick_params(labelsize=8)
+
+    return fig, plot_axes
 
 
 def dealias(B, domain, field, L_factor, N_factor, mesh=None):
