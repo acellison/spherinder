@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
-from eigtools import eigsort, plot_spectrum, discard_spurious_eigenvalues
+from eigtools import eigsort, scipy_sparse_eigs, plot_spectrum, discard_spurious_eigenvalues
 import spherinder as sph
 
 g_alpha_p = 2
 g_alpha_T = 0
+g_file_prefix = 'geometric_linear_onset'
 
 
 def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
@@ -337,6 +338,34 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
         raise ValueError('Unsupported boundary method')
 
 
+def permutation_indices(Lmax, Nmax):
+    """For each mode interlace the five field variables.  Returns two lists of
+       permutation indices, the first for the columns (variable ordering), and
+       the second for the rows (equation sorting).  Leaves tau variables as the
+       final set of coefficients so the tau columns are in the same location -
+       horizontally block appended to the matrix"""
+    nfields = 5
+    nvar = Lmax*Nmax
+    neqn = (Lmax+2)*(Nmax+1)
+    ntau = 2*(Nmax+1)+Lmax
+
+    variables = [range(i*nvar,(i+1)*nvar) for i in range(nfields)]
+    equations = [range(i*neqn,(i+1)*neqn) for i in range(nfields)]
+
+    vartau = range(nfields*nvar,nfields*(nvar+ntau))
+    varindices = [val for tup in zip(*variables) for val in tup]
+    varindices = varindices + list(vartau)
+    eqnindices = [val for tup in zip(*equations) for val in tup]
+    return varindices, eqnindices
+
+
+def invert_permutation(permutation):
+    """Invert a permutation"""
+    inv = np.empty_like(permutation)
+    inv[permutation] = np.arange(len(inv), dtype=inv.dtype)
+    return inv
+
+
 def checkdir(filename):
     filename = os.path.abspath(filename)
     path = os.path.dirname(filename)
@@ -354,21 +383,31 @@ def savefig(filename):
     plt.savefig(filename)
     
 
-def filename_prefix(directory='data'):
+def make_filename_prefix(directory='data'):
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
-    if not os.path.exists(basepath):
-        os.mkdir(basepath)
-    prefix = 'geometric_linear_onset'
-    return os.path.join(basepath, os.path.join(prefix, prefix))
+    abspath = os.path.join(basepath, g_file_prefix)
+    if not os.path.exists(abspath):
+        os.makedirs(abspath)
+    return os.path.join(abspath, g_file_prefix)
 
 
 def pickle_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='data'):
-    return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}.pckl'
+    return make_filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}.pckl'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev='all'):
     # Construct the system
+    print('Constructing matrix system...')
     M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
+
+    permute = True
+    enable_permutation = permute and boundary_method == 'galerkin'
+
+    if enable_permutation:
+        print('Reordering variables and equations...')
+        var, eqn = permutation_indices(Lmax, Nmax)
+        M, L = M[:,var], L[:,var]
+        M, L = M[eqn,:], L[eqn,:]
 
     if plot_spy:
         fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
@@ -378,7 +417,14 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
 
     # Compute the eigenvalues and eigenvectors
     print('Eigenvalue problem, size {}'.format(np.shape(L)))
-    evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
+    if nev == 'all':
+        evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
+    else:
+        evalues, evectors = scipy_sparse_eigs(L, M, nev, target=omega, profile=True)
+
+    if enable_permutation:
+        vari = invert_permutation(var)
+        evectors = evectors[vari,:]
 
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
@@ -407,7 +453,7 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     return bases
 
 
-def expand_evectors(Lmax, Nmax, vec, bases):
+def expand_evectors(Lmax, Nmax, vec, bases, domain):
     ncoeff = Lmax*Nmax
 
     # Get the grid space vector fields
@@ -420,19 +466,29 @@ def expand_evectors(Lmax, Nmax, vec, bases):
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
     # Convert to grid space
-    up = sph.expand(bases['up'], upcoeff.reshape((Lmax,Nmax)))
-    um = sph.expand(bases['um'], umcoeff.reshape((Lmax,Nmax)))
-    uz = sph.expand(bases['uz'], uzcoeff.reshape((Lmax,Nmax)))
-    p  = sph.expand(bases['p'],   pcoeff.reshape((Lmax,Nmax)))
-    T  = sph.expand(bases['T'],   Tcoeff.reshape((Lmax,Nmax)))
+    if bases is not None:
+        up = sph.expand(bases['up'], upcoeff.reshape((Lmax,Nmax)))
+        um = sph.expand(bases['um'], umcoeff.reshape((Lmax,Nmax)))
+        uz = sph.expand(bases['uz'], uzcoeff.reshape((Lmax,Nmax)))
+        p  = sph.expand(bases['p'],   pcoeff.reshape((Lmax,Nmax)))
+        T  = sph.expand(bases['T'],   Tcoeff.reshape((Lmax,Nmax)))
+    else:
+        m, Lmax, Nmax, s, eta, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['s'], domain['eta'], domain['boundary_method']
+        dalpha = 1 if boundary_method == 'galerkin' else 0
+        up = sph.expand_low_storage(upcoeff.reshape((Lmax,Nmax)), m, s, eta, sigma=+1, alpha=1+dalpha, basis_kind=boundary_method)
+        um = sph.expand_low_storage(umcoeff.reshape((Lmax,Nmax)), m, s, eta, sigma=-1, alpha=1+dalpha, basis_kind=boundary_method)
+        uz = sph.expand_low_storage(uzcoeff.reshape((Lmax,Nmax)), m, s, eta, sigma= 0, alpha=1+dalpha, basis_kind=boundary_method)
+        p  = sph.expand_low_storage( pcoeff.reshape((Lmax,Nmax)), m, s, eta, sigma= 0, alpha=g_alpha_p)
+        T  = sph.expand_low_storage( Tcoeff.reshape((Lmax,Nmax)), m, s, eta, sigma= 0, alpha=g_alpha_T+dalpha, basis_kind=boundary_method)
+
     u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
     return u, v, w, p, T, tau
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, domain):
     evalue, evector = evalues[index], evectors[:,index]
-    u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, evector, bases)
+    u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, evector, bases, domain)
 
     field_indices = [0,2,3,4]
     fields = [u,v,w,p,T]
@@ -464,8 +520,12 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     if plot_fields:
         ns, neta = 256, 255
         s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
+        if Lmax*Nmax < 2400:  # About 6GB in basis storage for (ns,neta) = (256,255)
+            bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+        else:
+            bases = None
+        domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method}
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, domain)
     else:
         onpick = None
 
@@ -484,26 +544,28 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
 def rotation_configs():
     return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 40},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 20},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
             {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 60, 'Nmax': 60},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 60, 'Nmax': 60}]
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 30, 'Nmax': 120}]
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
+    nev = 3
 
     config_index = 7
     config = rotation_configs()[config_index]
 
-    m, Ekman, Prandtl, Rayleigh = config['m'], config['Ekman'], 1, config['Rayleigh']
+    m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
     Lmax, Nmax = config['Lmax'], config['Nmax']
 
+    omega = 1j*omega/Ekman**(2/3)
     Rayleigh /= Ekman**(1/3)
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}, Prandtl = {Prandtl}, Rayleigh = {Rayleigh:1.4e}')
@@ -511,7 +573,7 @@ def main():
     print('  Boundary method = ' + boundary_method)
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_spy)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev=nev)
 
     if plot_fields or plot_evalues:
         plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields)
