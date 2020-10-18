@@ -2,17 +2,22 @@ from dedalus_sphere import ball_wrapper as ball
 from dedalus_sphere import ball128
 import dedalus.public as de
 from dedalus.core.distributor import Distributor
-import numpy as np
-import scipy.sparse as sparse
+
+import os
+import pickle
 from mpi4py import MPI
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.sparse as sparse
+
 import boussinesq
 from state_vector import StateVector
-from eigtools import eigsort, scipy_sparse_eigs
-from plot_tools import dealias, plotequatorialslice, plotmeridionalslice, plotequatorialquiver, plotmeridionalquiver
-import matplotlib.pyplot as plt
+from eigtools import eigsort, plot_spectrum
+from plot_tools import dealias, plotmeridionalslice
 
 
-automatic_boundary_conditions = True
+g_file_prefix = 'damped_inertial_waves'
+automatic_boundary_conditions = False
 
 if automatic_boundary_conditions:
     def ntau(_):
@@ -202,35 +207,42 @@ def build_matrices(B, state_vector, m, Ekman, alpha_BC, bc_type):
         Q = sparse.block_diag([Q_ell for Q_ell in Qmats])
         M, L, C = M @ Q, L @ Q, C @ Q
 
-    Amat = L + 2*C
-    Bmat = -M
+    Amat = L + C
+    Bmat = -Ekman * M
     return Amat, Bmat
 
 
-def damped_inertial_waves(B, m, domain, Ekman, boundary_condition):
+def checkdir(filename):
+    path = os.path.dirname(os.path.abspath(filename))
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def save_data(filename, data):
+    checkdir(filename)
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+
+
+def save_figure(filename, fig):
+    checkdir(filename)
+    fig.savefig(filename)
+    
+
+def make_filename_prefix(directory='data'):
+    basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
+    abspath = os.path.join(basepath, g_file_prefix)
+    return os.path.join(abspath, g_file_prefix)
+
+
+def output_filename(m, Lmax, Nmax, boundary_condition, Ekman, directory, ext, prefix='evalues'):
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_condition}' + ext
+
+
+def solve_eigenproblem(B, m, domain, Ekman, boundary_condition):
     print('Computing Inertial Wave Solutions...')
 
     alpha_BC = 0
-    save_plots = False
-    solve_dense = True
-    target_id = (4,1,0)
-
-    targets = {}  # Greenspan targets, final index == m
-    targets[(2,1,1)] = 1
-    targets[(4,1,0)] = 1.309
-    targets[(4,1,1)] = 0.820
-    targets[(4,2,1)] = 1.708
-    targets[(4,3,1)] = 0.612
-    targets[(6,1,0)] = 0.938
-    targets[(6,2,0)] = 1.660
-    targets[(8,1,0)] = 0.726
-    targets[(8,2,0)] = 1.354
-    targets[(8,3,0)] = 1.800
-
-    if save_plots:
-        def savefig(fn): plt.savefig(fn)
-    else:
-        def savefig(_): pass
 
     # Construct the state vector
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
@@ -239,105 +251,89 @@ def damped_inertial_waves(B, m, domain, Ekman, boundary_condition):
     print('  Building matrices...')
     Amat, Bmat = build_matrices(B, state_vector, m, Ekman=Ekman, alpha_BC=alpha_BC, bc_type=boundary_condition)
 
-    if solve_dense:
-        # Compute eigenvalues
-        print('  Solving eigenproblem for m = {}, size {}x{}'.format(m, np.shape(Amat)[0], np.shape(Amat)[1]))
-        lam, v = eigsort(Amat.todense(), Bmat.todense(), cutoff=1e9)
+    # Compute eigenvalues
+    print('  Solving eigenproblem for m = {}, size {}x{}'.format(m, np.shape(Amat)[0], np.shape(Amat)[1]))
+    evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), cutoff=1e9)
 
-        plt.plot(np.real(lam), np.imag(lam), '.', markersize=3, color='tab:blue')
-        plt.xlabel('Real(λ)')
-        plt.ylabel('Imag(λ)')
-        plt.title('Damped Inertial Wave Eigenvalues, Ekman = {:1.6e}, m = {}, Lmax = {}'.format(Ekman, m, B.L_max))
-        plt.grid(True)
-        filename = 'figures/damped_inertial_waves/damped_inertial_wave_eigenvalues-Ekman={:1.6e}-m={}-Lmax={}'.format(Ekman, m, B.L_max)
-        savefig(filename + '.png')
+    # Output data
+    data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max, 
+            'boundary_condition': boundary_condition,
+            'evalues': evalues, 'evectors': evectors,
+            'Ekman': Ekman}
+    filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, directory='data', ext='.pckl')
+    save_data(filename, data)
 
-        plt.show()
+
+def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
+    plot_velocity = False
+    evalue, evector = evalues[index], evectors[:,index]
+
+    u = ball.TensorField_3D(1, B, domain)
+    p = ball.TensorField_3D(0, B, domain)
+    state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
+    state_vector.unpack(evector, [u, p])
+
+    # Upsample the result
+    res = 256
+    L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
+    p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
+    names, fields = ['p'], [p['g'][0]]
+    if plot_velocity:
+        u, _, _, _ = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
+        names += ['u_r', 'u_θ', 'u_φ']
+        fields += [u['g'][i] for i in [0,1,2]]
+
+    angle = 0.
+    # Plot velocity
+    for index, name in enumerate(names):
+        fig, ax = plotmeridionalslice(fields[index], r, theta, phi, angle=angle)
+        fig.suptitle('${}$,  λ = {:1.4e}'.format(name, evalue))
+        fig.show()
+
+
+def plot_solution(B, m, domain, Ekman, boundary_condition):
+    # Load the data
+    filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, directory='data', ext='.pckl')
+    data = pickle.load(open(filename, 'rb'))
+
+    # Extract configuration parameters
+    evalues, evectors = data['evalues'], data['evectors']
+
+    plot_fields = True
+    if plot_fields:
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
     else:
-        print('  Solving sparse eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(
-                m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]),  flush=True)
-        lam, v = scipy_sparse_eigs(Amat, Bmat, N=1, target=1j*targets[target_id], profile=True)
+        onpick = None
 
-    target_ids = [target_id]
-    for index in target_ids:
-        modestr = str(index[0]) + str(index[1]) + str(index[2])
+    fig, ax = plot_spectrum(evalues, onpick)
+    ax.set_title('Hydrodynamics Eigenvalues')
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
 
-        eval_target = 1j*targets[index]
-        ind = np.argmin(abs(lam - eval_target))
-        eval = lam[ind]
-        evec = v[:, ind]
+    plot_filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, directory='figures', ext='.png')
+    save_figure(plot_filename, fig)
 
-        print("  Plotting eigenvectors for Greenspan Mode {}, λ = {:1.5e}...".format(index, eval))
-        # Unpack the eigenvector into our tensor fields
-        u = ball.TensorField_3D(1, B, domain)
-        p = ball.TensorField_3D(0, B, domain)
-        state_vector.unpack(evec, [u, p])
-
-        # Dealias for plotting
-        res = 256
-        L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
-        p, _, _, _ = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
-        u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-
-        p = p['g'][0]
-        ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
-
-        filename = lambda field, sl: 'figures/damped_inertial_waves/damped_inertial_wave-Ekman={:1.6e}-mode={}-bc={}-field={}-slice={}.png'.format(Ekman, modestr, boundary_condition, field, sl)
-
-        # Plot
-        if m > 0:
-            plotequatorialslice(ur, r, theta, phi)
-            plt.title('Ekman = {:1.4e}, λ = {:1.4e}, Equatorial Slice, $u_r$'.format(Ekman, eval))
-            savefig(filename('ur', 'e'))
-
-            plotequatorialslice(utheta, r, theta, phi)
-            plt.title('Ekman = {:1.4e}, λ = {:1.4e}, Equatorial Slice, $u_Θ$'.format(Ekman, eval))
-            savefig(filename('utheta', 'e'))
-
-            plotequatorialslice(uphi, r, theta, phi)
-            plt.title('Ekman = {:1.4e}, λ = {:1.4e}, Equatorial Slice, $u_ϕ$'.format(Ekman, eval))
-            savefig(filename('uphi', 'e'))
-
-        angle = 0.
-
-        plotmeridionalslice(p, r, theta, phi, angle=angle)
-        plt.title('Ekman = {:1.4e}, λ = {:1.4e}, pressure'.format(Ekman, eval))
-        savefig(filename('p', 'm'))
-
-        plotmeridionalslice(ur, r, theta, phi, angle=angle)
-        plt.title('Ekman = {:1.4e}, λ = {:1.4e}, $u_r$'.format(Ekman, eval))
-        savefig(filename('ur', 'm'))
-
-        plotmeridionalslice(uphi, r, theta, phi, angle=angle)
-        plt.title('Ekman = {:1.4e}, λ = {:1.4e}, $u_φ$'.format(Ekman, eval))
-        savefig(filename('uphi', 'm'))
-
-        plotmeridionalslice(utheta, r, theta, phi, angle=angle)
-        plt.title('Ekman = {:1.4e}, λ = {:1.4e}, $u_Θ$'.format(Ekman, eval))
-        savefig(filename('utheta', 'm'))
-
-        # Normalized kinetic energy
-        ke = np.log10(0.5 * (u['g'][0] ** 2 + u['g'][1] ** 2 + u['g'][2] ** 2))
-        ke -= np.max(ke)
-        truncate_level = -8
-        ketrunc = np.where(ke < truncate_level, np.nan, ke)
-
-        plotmeridionalslice(ketrunc, r, theta, phi, angle=angle, cmap='RdBu_r')
-        plt.title('Ekman = {:1.4e}, λ = {:1.4e}, Kinetic Energy'.format(Ekman, eval))
-        savefig(filename('ke', 'm'))
+    fig.show()
 
 
 def main():
+    solve = False
+    plot = True
+
     # Create the domain
-    m = 0
-    L_max, N_max = 15, 15
-    Ekman = 10**-1
+    m, Ekman = 14, 1e-5
+    L_max, N_max = 40, 40
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
 
     B, domain = build_ball(L_max=L_max, N_max=N_max)
-    damped_inertial_waves(B, m, domain, Ekman, boundary_condition)
-    plt.show()
+
+    if solve:
+        solve_eigenproblem(B, m, domain, Ekman, boundary_condition)
+
+    if plot:
+        plot_solution(B, m, domain, Ekman, boundary_condition)
+        plt.show()
 
 
 if __name__=='__main__':
