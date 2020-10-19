@@ -8,13 +8,15 @@ import matplotlib.pyplot as plt
 import time
 import boussinesq
 from state_vector import StateVector
-from eigtools import scipy_sparse_eigs, track_eigenpair, eigsort
+from eigtools import scipy_sparse_eigs, track_eigenpair, eigsort, plot_spectrum
 from plot_tools import plotmeridionalslice, dealias, sph2cart
 from interpolate import interpolate, envelope, polyfit
 import scipy.signal as ss
 import scipy.fft as fft
 import pickle, os, glob
 
+
+g_file_prefix = 'critical_rayleigh_rotating'
 
 def build_ball(L_max, N_max):
     R_max = 3
@@ -363,7 +365,34 @@ def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, 
     return lam, v, Rayleigh
 
 
-def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False, boundary_condition='stress-free',
+def checkdir(filename):
+    path = os.path.dirname(os.path.abspath(filename))
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def save_data(filename, data):
+    checkdir(filename)
+    with open(filename, 'wb') as f:
+        pickle.dump(data, f)
+
+
+def save_figure(filename, fig):
+    checkdir(filename)
+    fig.savefig(filename)
+
+
+def make_filename_prefix(directory='data'):
+    basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
+    abspath = os.path.join(basepath, g_file_prefix)
+    return os.path.join(abspath, g_file_prefix)
+
+
+def output_filename(m, Lmax, Nmax, boundary_condition, Ekman, Prandtl, Rayleigh, directory, ext, prefix='evalues'):
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl:1.4e}-Rayleigh={Rayleigh:1.4e}-{boundary_condition}' + ext
+
+
+def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-free',
                               thermal_forcing_factor=1.0):
     print('Computing Critical Rayleigh Number', flush=True)
     print('  Boussinesq ball dimensions: m = {}, L_max = {}, N_max = {}'.format(m, B.L_max, B.N_max), flush=True)
@@ -384,16 +413,7 @@ def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False, b
     Rayleigh = thermal_forcing_factor * Rayleigh / Ekman**(1/3)
     alpha_BC = 2
 
-    # Ekman_range = Ekman*np.logspace(0,-2,21)
-    Ekman_range = [Ekman]
-
     lamtarget = 1j*omega
-    verbose = True
-    bisect_tol = 1e-4
-    newton_tol = 1e-10
-    max_newton_iters = 5
-    max_bisect_iters = 0
-    check_critical_rayleigh = True
 
     print('  Constructing the full system, m = {}, Ekman = {}, Rayleigh = {}...'.format(m, Ekman, Rayleigh), flush=True)
     ntau = lambda ell: 1 if ell == 0 else 4
@@ -413,85 +433,89 @@ def compute_critical_rayleigh(B, m, domain, config, nev=10, evalue_only=False, b
 
     print('  Solving sparse eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]), flush=True)
     if nev == 'all':
-        lam, v = eigsort(Amat.todense(), Bmat.todense(), profile=True)
+        evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), profile=True)
     else:
-        lam, v = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
+        evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
 
-    if nev == 'all':
-        plt.plot(lam.real, lam.imag, '.')
-        plt.show()
+    # Output data
+    data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max,
+            'boundary_condition': boundary_condition,
+            'evalues': evalues, 'evectors': evectors,
+            'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
+    filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    save_data(filename, data)
+
+
+def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
+    plot_velocity = True
+    evalue, evector = evalues[index], evectors[:,index]
+
+    ntau = lambda ell: 1 if ell == 0 else 4
+    u = ball.TensorField_3D(1, B, domain)
+    p = ball.TensorField_3D(0, B, domain)
+    T = ball.TensorField_3D(0, B, domain)
+    state_vector = StateVector(B, 'mlr', [('u',1),('p',0),('T',0)], ntau=ntau, m_min=m, m_max=m)
+    state_vector.unpack(evector, [u, p, T])
+
+    # Upsample the result
+    res = 256
+    L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
+
+    p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
+    T, _, _, _       = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
+    names, fields = ['p', 'T'], [p['g'][0], T['g'][0]]
+    if plot_velocity:
+        u, _, _, _ = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
+        names += ['u_r', 'u_θ', 'u_φ']
+        fields += [u['g'][i] for i in [0,1,2]]
+
+    angle = 0.
+    # Plot velocity
+    for index, name in enumerate(names):
+        fig, ax = plotmeridionalslice(fields[index], r, theta, phi, angle=angle)
+        fig.suptitle('${}$,  λ = {:1.4e}'.format(name, evalue))
+        fig.show()
+
+
+def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_factor):
+    # Get reduced nondimensional parameters from config
+    Ekman, Rayleigh, omega = config['Ekman'], config['Rayleigh'], config['omega']
+
+    # Rescale parameters
+    omega /= Ekman**(2/3)
+    Prandtl = 1
+    Rayleigh = thermal_forcing_factor * Rayleigh / Ekman**(1/3)
+
+    # Load the data
+    filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    data = pickle.load(open(filename, 'rb'))
+
+    # Extract configuration parameters
+    evalues, evectors = data['evalues'], data['evectors']
+
+    plot_fields = True
+    if plot_fields:
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
     else:
-        print('  Computed Eigenvalues:')
-        for i in range(len(lam)):
-            print('    evalue = {: 1.9e}'.format(lam[i]))
-    print('  Eigenvalue with maximum real part = {: 1.9e}'.format(lam[-1]), flush=True)
+        onpick = None
 
-    if evalue_only:
-        return lam
+    fig, ax = plot_spectrum(evalues, onpick)
+    ax.set_title('Hydrodynamics Eigenvalues')
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
 
-    lam = lam[-1]
-    v = v[:,-1]
-    Rayleigh_critical = []
-    omega_critical = []
+    plot_filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png')
+    save_figure(plot_filename, fig)
 
-    # Track the eigenpair to find the critical rayleigh number
-    for i in range(len(Ekman_range)):
-        Ekman = Ekman_range[i]
-
-        lam, v, Rayleigh = rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh,
-                                              bracket_scale=1.01, newton_tol=newton_tol, bisect_tol=bisect_tol,
-                                              max_newton_iters=max_newton_iters, max_bisect_iters=max_bisect_iters,
-                                              verbose=verbose)
-
-        if check_critical_rayleigh and max_bisect_iters > 0:
-            Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-            lam2, v2 = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
-            lam2 = lam2[-1]
-            error = np.abs(lam-lam2)
-            print('  Error in Newton eigenvalue vs. scipy solve: {}'.format(error))
-            if error > 1e-1:
-                raise ValueError('Eigenvalue fell off the rails: mine: {:1.5e}, scipy: {:1.5e}, error: {:1.5e}'.format(lam, lam2, error))
-
-        print('  Critical Rayleigh number for system [m = {}, Ekman = {:1.5e}] = {},  Reduced Rayleigh = {:1.9e},  ω = {:1.5e}'.format(m, Ekman, Rayleigh/Ekman, Rayleigh, -lam.imag), flush=True)
-        Rayleigh_critical.append(Rayleigh/Ekman)
-        omega_critical.append(lam.imag)
-
-    for i in range(len(Ekman_range)):
-        print('Ekman: {:1.5e}, Rayleigh: {:1.9e}, omega: {:1.5e}'.format(Ekman_range[i], Rayleigh_critical[i], omega_critical[i]))
-
-    if save_evec:
-        basepath = os.path.dirname(__file__)
-        evec_filename = os.path.join(basepath, 'data/boussinesq-evec-Ekman={:1.3e}-bc={}.pckl'.format(Ekman, boundary_condition))
-        data = {'config': config, 'evalue': lam, 'evector': v}
-        with open(evec_filename, 'wb') as f:
-            pickle.dump(data, f)
-
-    u, p, T = None, None, None
-    if plot_coeff_decay or plot_evec:
-        eval = lam
-        evec = v
-
-        print('  Plotting eigenvector for eigenvalue = {}'.format(eval), flush=True)
-        # Unpack the eigenvector into our tensor fields
-        u = ball.TensorField_3D(1, B, domain)
-        p = ball.TensorField_3D(0, B, domain)
-        T = ball.TensorField_3D(0, B, domain)
-        state_vector.unpack(evec, [u, p, T])
-
-    if plot_coeff_decay:
-        # plot_spectral_decay(u, p, T, B, m, Ekman, Rayleigh, save_plots)
-        resolution = 512
-        L_factor, N_factor = np.ceil(resolution/(B.L_max+1)), np.ceil(resolution/(B.N_max+1))
-        T, r, theta, phi = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
-        plot_chebyshev_decay(T, r, theta, phi, m, Ekman, Rayleigh, save_plots)
-
-    if plot_evec:
-        plot_fields(u, p, T, B, m, domain, Ekman, Rayleigh, save_plots, plot_resolution, plot_dpi)
+    fig.show()
 
 
 def compute_eigensolutions():
     import warnings
     warnings.simplefilter("ignore")
+
+    solve = True
+    plot = True
 
     configs = [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 32,  'Nmax': 31},
                {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 32,  'Nmax': 31},
@@ -504,18 +528,24 @@ def compute_eigensolutions():
 
     boundary_condition = 'no-slip'
     # boundary_condition = 'stress-free'
-    # nev = 10
-    nev = 'all'
+    nev = 3
+    # nev = 'all'
     thermal_forcing_factor = 1
 
-    # configs = [configs[-2]]
-    configs = [configs[1]]
+    configs = [configs[4]]
     for config in configs:
-        m = config['m']
-        L_max, N_max = config['Lmax'], config['Nmax']
+        # Build the domain
+        m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
         B, domain = build_ball(L_max=L_max, N_max=N_max)
-        compute_critical_rayleigh(B, m, domain, config, nev=nev, boundary_condition=boundary_condition,
-                                  thermal_forcing_factor=thermal_forcing_factor)
+
+        # Solve the eigenproblem
+        if solve:
+            solve_eigenproblem(B, m, domain, config, nev=nev, boundary_condition=boundary_condition,
+                               thermal_forcing_factor=thermal_forcing_factor)
+
+        # Plot the solution
+        if plot:
+            plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_factor)
 
     plt.show()
 
