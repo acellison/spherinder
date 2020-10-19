@@ -265,7 +265,7 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fields = [u,v,w,p]
     field_names = ['u','v','w','p']
 
-    fig, ax = plt.subplots(1,len(field_indices),figsize=(9,2*4.5))
+    fig, ax = plt.subplots(1,len(field_indices),figsize=(9,4.5))
     for i in range(len(field_indices)):
         field_index = field_indices[i]
         f = fields[field_index]
@@ -331,5 +331,4 @@ def main():
 
 if __name__=='__main__':
     main()
-#    analyze_evalues()
 
