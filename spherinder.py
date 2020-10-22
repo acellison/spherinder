@@ -588,7 +588,7 @@ def operator(name, field=None, dtype='float64'):
         return OneMinusRadiusSquared(dtype=dtype)
     if name == 'erdot':
         return RadialVector(dtype=dtype)
-    if name == 'boundary':
+    if name in ['boundary', 'r=1']:
         return Boundary(dtype=dtype)
     if name == 'conversion':
         return Conversion(dtype=dtype)
