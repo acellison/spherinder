@@ -105,14 +105,30 @@ def resize(mat, Lin, Nin, Lout, Nout):
     if not nintotal == nrows:
         raise ValueError('Incorrect size')
 
-    result = sparse.lil_matrix((nouttotal,ncols), dtype=mat.dtype)
+    if not isinstance(mat, sparse.csr_matrix):
+        mat = mat.tocsr()
+    rows, cols = mat.nonzero()
+    oprows, opcols, opdata = [], [], []
+
     L = min(Lin,Lout)
     inoffset, outoffset = 0, 0
+    dn = 0
     for ell in range(L):
-        N = min(Nin(ell), Nout(ell))
-        result[outoffset:outoffset+N,:] = mat[inoffset:inoffset+N,:]
-        inoffset += Nin(ell)
-        outoffset += Nout(ell)
+        nin, nout = Nin(ell), Nout(ell)
+        n = min(nin,nout)
+
+        indices = np.where(np.logical_and(inoffset <= rows, rows < inoffset+n))
+        r, c = rows[indices], cols[indices]
+        oprows += (r+dn).tolist()
+        opcols += c.tolist()
+        opdata += np.asarray(mat[r,c]).ravel().tolist()
+
+        dn += nout-nin
+        inoffset += nin
+        outoffset += nout
+
+    result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
+
     return result
 
 
@@ -178,8 +194,7 @@ def make_operator(zmat, smats, Lmax=None, Nmax=None):
     smats = [pad(smat, Nout) for smat in smats]
 
     # Construct the operator matrix
-    dtype = _widest_dtype(zmat, smats)
-    op = sparse.lil_matrix((Lout*Nout,Lin*Nin), dtype=dtype)
+    oprows, opcols, opdata = [], [], []
     rows, cols = zmat.nonzero()
     for row, col in zip(rows, cols):
         value = zmat[row,col]
@@ -187,8 +202,15 @@ def make_operator(zmat, smats, Lmax=None, Nmax=None):
             value = value.todense()[0,0]
         if np.abs(value) < 1e-15:
             continue
-        smat = smats[col]
-        op[Nout*row:Nout*(row+1),Nin*col:Nin*(col+1)] = value * smat
+
+        mat = sparse.csr_matrix(value * smats[col])
+        matrows, matcols = mat.nonzero()
+        oprows += (Nout*row + matrows).tolist()
+        opcols += (Nin*col + matcols).tolist()
+        opdata += np.asarray(mat[matrows,matcols]).ravel().tolist()
+
+    dtype = _widest_dtype(zmat, smats)
+    op = sparse.csr_matrix((opdata, (oprows, opcols)), shape=(Lout*Nout,Lin*Nin), dtype=dtype)
     return op
 
 
