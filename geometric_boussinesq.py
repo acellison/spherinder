@@ -402,7 +402,6 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
 
     permute = True
     enable_permutation = permute and boundary_method == 'galerkin'
-
     if enable_permutation:
         print('Reordering variables and equations...')
         var, eqn = permutation_indices(Lmax, Nmax)
@@ -420,7 +419,8 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
     if nev == 'all':
         evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
     else:
-        evalues, evectors = scipy_sparse_eigs(L, M, nev, target=omega, profile=True)
+        matsolver = 'UmfpackSpsolve'
+        evalues, evectors = scipy_sparse_eigs(L, M, nev, target=omega, matsolver=matsolver, profile=True)
 
     if enable_permutation:
         vari = invert_permutation(var)
@@ -486,7 +486,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain):
     return u, v, w, p, T, tau
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, domain):
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain):
     evalue, evector = evalues[index], evectors[:,index]
     u, v, w, p, T, tau = expand_evectors(Lmax, Nmax, evector, bases, domain)
 
@@ -500,10 +500,6 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, 
         f = fields[field_index]
         sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i])
         ax[i].set_title(r'${}$'.format(field_names[field_index]))
-
-        if field_index in [0,1,2,4]:
-            error = max(np.linalg.norm(f[0,:]), np.linalg.norm(f[-1,:]))
-            print('Boundary error, {}: {}'.format(field_names[field_index], error))
 
     fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
     fig.show()
@@ -525,7 +521,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
         else:
             bases = None
         domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method}
-        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, domain)
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain)
     else:
         onpick = None
 
@@ -542,24 +538,27 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
 
 
 def rotation_configs():
-    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 16, 'Nmax': 16},
-            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 16, 'Nmax': 16},
+    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 20, 'Nmax': 21},
+            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 20, 'Nmax': 20},
             {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 20},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 60, 'Nmax': 60},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 100, 'Nmax': 100},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 30, 'Nmax': 120}]
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 180},
+            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 120, 'Nmax': 120}
+            ]
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
-    nev = 3
+#    nev = 'all'
+    nev = 10
 
-    config_index = 7
+    config_index = -2
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
