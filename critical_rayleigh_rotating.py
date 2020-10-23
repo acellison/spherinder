@@ -229,76 +229,6 @@ def plot_chebyshev_decay(field, r, theta, phi, m, Ekman, Rayleigh, save_plots):
     savefig(filename('radial'))
 
 
-def plot_fields(u, p, T, B, m, domain, Ekman, Rayleigh, save_plots, plot_resolution, plot_dpi):
-    if save_plots:
-        def savefig(fn): plt.savefig(fn + '.png', dpi=plot_dpi)
-    else:
-        def savefig(_): pass
-
-    # Dealias for plotting
-    L_factor, N_factor = max(plot_resolution // (B.L_max + 1), 1), max(plot_resolution // (B.N_max + 1), 1)
-
-    basepath = os.path.dirname(__file__)
-    filename = lambda field, sl: os.path.join(basepath,'figures/stretch/boussinesq-m={}-Lmax={}-Nmax={}-field={}-slice={}-Ekman={:1.6e}-Rayleigh={:1.6e}'.format(
-        m, B.L_max, B.N_max, field, sl, Ekman, Rayleigh))
-
-
-    # Plot settings
-    angle = 0.
-    stretch = False
-
-    """
-    # Compute the vorticity
-    om = ball.TensorField_3D(1, B, domain)
-    om.layout = 'c'
-    for ell in range(m, B.L_max + 1):
-        B.curl(ell, 1, u['c'][ell], om['c'][ell])
-    """
-
-    # Dealias the fields
-    T, r, theta, phi = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
-    T = T['g'][0]
-    """
-    u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-    ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
-
-    # Cartesian velocities
-    _, _, uz = sph2cart(u, theta, phi)
-
-    # Dealias the vorticity field
-    om, _, _, _ = dealias(B, domain, om, L_factor=L_factor, N_factor=N_factor)
-    omz = om['g'][0] * np.cos(theta) - om['g'][1] * np.sin(theta)
-
-    plotmeridionalslice(uphi, r, theta, phi, angle=angle, stretch=stretch)
-    plt.title('Meridional Slice, $u_ϕ$')
-    savefig(filename('uphi', 'm'))
-
-    plotmeridionalslice(uz, r, theta, phi, angle=angle, stretch=stretch)
-    plt.title('Meridional Slice, $u_z$')
-    savefig(filename('uz', 'm'))
-
-    plotmeridionalslice(omz, r, theta, phi, angle=angle, stretch=stretch)
-    plt.title('Meridional Slice, $ω_z$')
-    savefig(filename('omz', 'm'))
-    """
-
-    plotmeridionalslice(T, r, theta, phi, angle=angle, stretch=stretch)
-    plt.title('Meridional Slice, $T$')
-    savefig(filename('T', 'm'))
-
-    """
-    # Normalized kinetic energy
-    ke = np.log10(0.5 * (u['g'][0] ** 2 + u['g'][1] ** 2 + u['g'][2] ** 2))
-    ke -= np.max(ke)
-    truncate_level = -8
-    ketrunc = np.where(ke < truncate_level, np.nan, ke)
-
-    plotmeridionalslice(ketrunc, r, theta, phi, angle=angle, stretch=stretch, cmap='RdBu_r')
-    plt.title('Meridional Slice, $log_{10}$(Kinetic Energy), Truncated')
-    savefig(filename('ke', 'm'))
-    """
-
-
 def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh, bracket_scale=1.1,
                        newton_tol=1e-9, bisect_tol=1e-3, max_newton_iters=12, max_bisect_iters=12, verbose=False):
     if max_bisect_iters == 0:
@@ -394,15 +324,8 @@ def output_filename(m, Lmax, Nmax, boundary_condition, Ekman, Prandtl, Rayleigh,
 
 def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-free',
                               thermal_forcing_factor=1.0):
-    print('Computing Critical Rayleigh Number', flush=True)
+    print('Solving Linear Onset Eigenproblem', flush=True)
     print('  Boussinesq ball dimensions: m = {}, L_max = {}, N_max = {}'.format(m, B.L_max, B.N_max), flush=True)
-
-    plot_evec = True
-    plot_coeff_decay = False
-    save_plots = False
-    save_evec = False
-    plot_resolution = 256
-    plot_dpi = 600
 
     # Get reduced nondimensional parameters from config
     Ekman, Rayleigh, omega = config['Ekman'], config['Rayleigh'], config['omega']
@@ -435,7 +358,9 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
     if nev == 'all':
         evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), profile=True)
     else:
-        evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, profile=True)
+        matsolver = 'UmfpackFactorized'
+#        matsolver = None
+        evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, matsolver=matsolver, profile=True)
 
     # Output data
     data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max,
@@ -458,7 +383,7 @@ def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
     state_vector.unpack(evector, [u, p, T])
 
     # Upsample the result
-    res = 256
+    res = max(256, max(B.L_max+1, B.N_max+1))
     L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
 
     p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
@@ -511,8 +436,8 @@ def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_fact
 
 
 def compute_eigensolutions():
-    import warnings
-    warnings.simplefilter("ignore")
+#    import warnings
+#    warnings.simplefilter("ignore")
 
     solve = True
     plot = True
@@ -524,7 +449,8 @@ def compute_eigensolutions():
                {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 122, 'Nmax': 83},
                {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 152, 'Nmax': 101},
                {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
-               {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201}]
+               {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201},
+               {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500}]
 
     boundary_condition = 'no-slip'
     # boundary_condition = 'stress-free'
@@ -532,10 +458,13 @@ def compute_eigensolutions():
     # nev = 'all'
     thermal_forcing_factor = 1
 
-    configs = [configs[4]]
+    configs = [configs[-2]]
     for config in configs:
-        # Build the domain
+        # Extract the domain parameters
         m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
+
+        # Build the domain
+        print(f'Building ball: m = {m}, Lmax = {L_max}, Nmax = {N_max}', flush=True)
         B, domain = build_ball(L_max=L_max, N_max=N_max)
 
         # Solve the eigenproblem
