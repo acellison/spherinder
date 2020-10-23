@@ -246,7 +246,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         evalue_target = 49.14**2
     elif m == 30:
         kappa_for_mode = {10: 75.42894, 16: 95.62605, 20: 108.79477, 24: 121.82663, 30: 141.20734}
-        evalue_target = kappa_for_mode[24]**2
+        mode_number = 24
+        evalue_target = kappa_for_mode[mode_number]**2
     else:
         evalue_target = 100
     configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
