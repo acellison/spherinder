@@ -75,6 +75,8 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
     if matsolver is None:
         index = 1
         matsolver = de.matsolvers.matsolvers[matsolvers[index].lower()]
+    if isinstance(matsolver, str):
+        matsolver = de.matsolvers.matsolvers[matsolver.lower()]
 
     if profile:
         print("  Starting eigenvalue computation at {}...".format(datetime.datetime.now()), flush=True)
