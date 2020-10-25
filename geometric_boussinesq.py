@@ -464,7 +464,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all'):
     coeffs = {'up':upcoeff, 'um':umcoeff, 'uz':uzcoeff, 'p':pcoeff, 'T':Tcoeff}
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
-    if fields is 'all':
+    if fields == 'all':
         fields = ['u','v','w','p','T']
 
     which = []
@@ -482,7 +482,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all'):
         dalpha = 1 if boundary_method == 'galerkin' else 0
         alpha = {'up':1+dalpha, 'um':1+dalpha, 'uz':1+dalpha, 'p':g_alpha_p, 'T':g_alpha_T+1}
         sigma = {'up':+1, 'um':-1, 'uz':0, 'p': 0, 'T': 0}
-        basis = lambda field: None if field is 'p' else boundary_method
+        basis = lambda field: None if field == 'p' else boundary_method
 
         # Expand the coefficients
         result = [sph.expand_low_storage(coeffs[field].reshape((Lmax,Nmax)), m, s, eta, sigma=sigma[field], alpha=alpha[field], basis_kind=basis(field)) for field in which]
