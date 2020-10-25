@@ -4,23 +4,81 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.linalg import eig
 from scipy import sparse
+import scipy.sparse.linalg as spla
 import dedalus.public as de
 import dedalus.tools.sparse as dts
 
 
-@de.matsolvers.add_solver
-class LSQR_solve(de.matsolvers.SparseSolver):
-    """LSQR solve."""
+matsolvers = ['UmfpackSpsolve', 'SuperluNaturalSpsolve', 'SuperluColamdSpsolve',
+              'UmfpackFactorized', 'SuperluNaturalFactorized', 'SuperluColamdFactorized',
+              'ScipyBanded', 'SPQR_solve', 'BandedQR', 'SparseInverse',
+              'DenseInverse', 'BlockInverse']
 
-    def __init__(self, matrix, solver=None):
-        self.matrix = matrix.copy()
 
-    def solve(self, vector):
-        n = np.prod(np.shape(vector))
-        vector = np.reshape(np.asarray(vector.ravel()), n)
-        solution = sparse.linalg.lsqr(self.matrix, vector, atol=1e-14, btol=1e-14)
-        return np.reshape(solution[0], (np.shape(self.matrix)[1], 1))
+def _to_int64(x):
+    """Force 64-bit indices so Umfpack doesn't raise an out of memory exception"""
+    y = sparse.csc_matrix(x).copy()
+    y.indptr = y.indptr.astype(np.int64)
+    y.indices = y.indices.astype(np.int64)
+    return y
 
+
+def add_custom_solvers():
+    SparseSolver = de.matsolvers.SparseSolver
+
+    # Add the LSQR solver to the dedalus matsolvers module
+    @de.matsolvers.add_solver
+    class LSQR_solve(SparseSolver):
+        """LSQR solve."""
+
+        def __init__(self, matrix, solver=None):
+            self.matrix = matrix.copy()
+
+        def solve(self, vector):
+            n = np.prod(np.shape(vector))
+            vector = np.reshape(np.asarray(vector.ravel()), n)
+            solution = sparse.linalg.lsqr(self.matrix, vector, atol=1e-14, btol=1e-14)
+            return np.reshape(solution[0], (np.shape(self.matrix)[1], 1))
+
+
+    @de.matsolvers.add_solver
+    class UmfpackSpsolve64(SparseSolver):
+        """UMFPACK spsolve, 64 bit indices."""
+
+        def __init__(self, matrix, solver=None):
+            from scikits import umfpack
+            self.matrix = _to_int64(matrix)
+
+        def solve(self, vector):
+            return spla.spsolve(self.matrix, vector, use_umfpack=True)
+
+
+    @de.matsolvers.add_solver
+    class UmfpackFactorized64(SparseSolver):
+        """UMFPACK LU factorized solve, 64 bit indices."""
+
+        def __init__(self, matrix, solver=None):
+            from scikits import umfpack
+            self.LU = spla.factorized(_to_int64(matrix))
+
+        def solve(self, vector):
+            return self.LU(vector)
+
+    # Make it addressable via string
+    global matsolvers
+    matsolvers += ['LSQR_solve', 'UmfpackSpsolve64', 'UmfpackFactorized64']
+
+
+def make_solver(matsolver):
+    if matsolver is None:
+        matsolver = 'SuperluNaturalSpsolve'
+
+    if isinstance(matsolver, str):
+        if matsolver.lower() in ['lsqr_solve', 'umfpackspsolve64', 'umfpackfactorized64']:
+            add_custom_solvers()
+        matsolver = de.matsolvers.matsolvers[matsolver.lower()]
+
+    return matsolver
 
 
 def eigsort(A, B, profile=False, overwrite=False, cutoff=np.inf):
@@ -42,12 +100,6 @@ def eigsort(A, B, profile=False, overwrite=False, cutoff=np.inf):
         print("Eigenvalues took {:g} sec".format(evals_end-evals_start))
 
     return vals, vecs
-
-
-matsolvers = ['UmfpackSpsolve', 'SuperluNaturalSpsolve', 'SuperluColamdSpsolve',
-              'UmfpackFactorized', 'SuperluNaturalFactorized', 'SuperluColamdFactorized',
-              'ScipyBanded', 'SPQR_solve', 'BandedQR', 'SparseInverse',
-              'DenseInverse', 'BlockInverse']
 
 
 def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
@@ -72,32 +124,31 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
 
     Other keyword options passed to scipy.sparse.linalg.eigs.
     """
-    if matsolver is None:
-        index = 1
-        matsolver = de.matsolvers.matsolvers[matsolvers[index].lower()]
-    if isinstance(matsolver, str):
-        matsolver = de.matsolvers.matsolvers[matsolver.lower()]
+    matsolver = make_solver(matsolver)
 
     if profile:
         print("  Starting eigenvalue computation at {}...".format(datetime.datetime.now()), flush=True)
-        evals_start = time.time()
+        evalues_start = time.time()
 
-    vals, vecs = dts.scipy_sparse_eigs(A, B, N, target, matsolver)
+    # Run dedalus wrapper on scipy sparse eigensolver
+    evalues, evectors = dts.scipy_sparse_eigs(A, B, N, target, matsolver)
 
+    # Remove infinite eigenvalues
     cutoff = np.inf
-    bad = (np.abs(vals) > cutoff)
-    vals[bad] = np.nan
-    vecs = vecs[:,np.isfinite(vals)]
-    vals = vals[np.isfinite(vals)]
+    bad = np.abs(evalues) > cutoff
+    evalues[bad] = np.nan
+    evectors = evectors[:,np.isfinite(evalues)]
+    evalues = evalues[np.isfinite(evalues)]
 
-    i = np.argsort(vals.real)
-    vals, vecs = vals[i], vecs[:, i]
+    # Sort by real part
+    i = np.argsort(evalues.real)
+    evalues, evectors = evalues[i], evectors[:, i]
 
     if profile:
-        evals_end = time.time()
-        print("  Eigenvalues took {:g} sec".format(evals_end-evals_start), flush=True)
+        evalues_end = time.time()
+        print("  Eigenvalues took {:g} sec".format(evalues_end-evalues_start), flush=True)
 
-    return vals, vecs
+    return evalues, evectors
 
 
 def track_eigenpair(A, B, lam, v, matsolver=None, tol=1e-14, maxiter=10, verbose=False, profile=False):
@@ -111,7 +162,7 @@ def track_eigenpair(A, B, lam, v, matsolver=None, tol=1e-14, maxiter=10, verbose
     v /= np.linalg.norm(v)
 
     if isinstance(matsolver, str):
-        matsolver = de.matsolvers.matsolvers[matsolver.lower()]
+        matsolver = make_solver(matsolver)
 
     if profile:
         evals_start = time.time()
@@ -133,7 +184,7 @@ def track_eigenpair(A, B, lam, v, matsolver=None, tol=1e-14, maxiter=10, verbose
             delta = solver.solve(-r)
         else:
             # Sparse solve
-            delta = sparse.linalg.spsolve(M, -r)
+            delta = spla.spsolve(M, -r)
 
         v[:, 0] += np.asmatrix(delta).T[:n, 0]
         lam += np.asscalar(delta[n])
