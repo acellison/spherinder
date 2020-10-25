@@ -65,7 +65,7 @@ def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None)
     return f
 
 
-def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal'):
+def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):
     """Plot a 2D slice of the field at phi = 0"""
     s, eta = s.ravel(), eta.ravel()
     ss = s[np.newaxis,:]
@@ -78,7 +78,8 @@ def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal'):
     if fig is None or ax is None:
         fig, ax = plt.subplots(figsize=(4.25,6))
     im = ax.pcolormesh(ss, y, f, cmap='RdBu')
-    fig.colorbar(im, ax=ax)
+    if colorbar:
+        fig.colorbar(im, ax=ax)
     ax.set_xlabel('s')
     ax.set_ylabel('η' if stretch else 'z')
     if aspect is not None:
