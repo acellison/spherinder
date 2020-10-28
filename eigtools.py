@@ -269,7 +269,7 @@ def plot_spectrum(evalues, onpick=None, *args, **kwargs):
         return True
 
     fig, ax = plt.subplots()
-    ax.plot(evalues.real, evalues.imag, '.', markersize=2, picker=5, *args, **kwargs)
+    ax.plot(evalues.real, evalues.imag, '.', markersize=2, picker=True, pickradius=5, *args, **kwargs)
     ax.set_xlabel('Real(λ)')
     ax.set_ylabel('Imag(λ)')
     ax.grid()
