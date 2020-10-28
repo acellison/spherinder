@@ -417,7 +417,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
     if nev == 'all':
         evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
     else:
-        matsolver = 'UmfpackSpsolve64'
+        matsolver = 'UmfpackFactorized64'
         evalues, evectors = scipy_sparse_eigs(L, M, nev, target=omega, matsolver=matsolver, profile=True)
 
     if enable_permutation:
@@ -451,19 +451,22 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     return bases
 
 
-def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all'):
+def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=False):
     ncoeff = Lmax*Nmax
 
-    # Get the grid space vector fields
+    tau = vec[5*ncoeff:]
+    print('Tau norm: {}'.format(np.linalg.norm(tau)))
+    if error_only:
+        return
+
+    # Get the grid space vector fields, real part only
+    vec = vec.real
     upcoeff = vec[:ncoeff] 
     umcoeff = vec[ncoeff:2*ncoeff] 
     uzcoeff = vec[2*ncoeff:3*ncoeff]
     pcoeff = vec[3*ncoeff:4*ncoeff]
     Tcoeff = vec[4*ncoeff:5*ncoeff]
-    tau = vec[5*ncoeff:]
     coeffs = {'up':upcoeff, 'um':umcoeff, 'uz':uzcoeff, 'p':pcoeff, 'T':Tcoeff}
-    print('Tau norm: {}'.format(np.linalg.norm(tau)))
-
     if fields == 'all':
         fields = ['u','v','w','p','T']
 
@@ -499,25 +502,31 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all'):
     return {'u':u, 'v':v, 'w':w, 'p':p, 'T':T}
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain):
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
-    d = expand_evectors(Lmax, Nmax, evector, bases, domain)
-    u, v, w, p, T = d['u'], d['v'], d['w'], d['p'], d['T']
 
-    field_indices = [0,2,3,4]
-    fields = [u,v,w,p,T]
-    field_names = ['u','v','w','p','T']
+    fields = ['u']
+    d = expand_evectors(Lmax, Nmax, evector, bases, domain, fields=fields, error_only=error_only)
+    if error_only:
+        return
 
+    fig, ax = plt.subplots(1,len(fields),figsize=(0.5+3*len(fields),4.5))
+    if len(fields) == 1:
+        ax = [ax]
     s, eta = domain['s'], domain['eta']
-
-    fig, ax = plt.subplots(1,len(field_indices),figsize=(13,4.5))
-    for i in range(len(field_indices)):
-        field_index = field_indices[i]
-        f = fields[field_index]
-        sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i])
-        ax[i].set_title(r'${}$'.format(field_names[field_index]))
+    for i, field in enumerate(fields):
+        sph.plotfield(s, eta, d[field].real, fig=fig, ax=ax[i], colorbar=False)
+        ax[i].set_title(r'${}$'.format(field))
 
     fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
+
+    m, Lmax, Nmax, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['boundary_method']
+    Ekman, Prandtl, Rayleigh = domain['Ekman'], domain['Prandtl'], domain['Rayleigh']
+
+    prefix = 'fields=' + str(fields).replace('[','').replace(']','').replace(' ','').replace('\'\'','_').replace('\'','')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix=prefix)
+    save_figure(plot_filename, fig, dpi=1200)
+
     fig.show()
 
 
@@ -529,17 +538,16 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    if plot_fields:
-        ns, neta = 256, 255
-        s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-        if Lmax*Nmax < 2400:  # About 6GB in basis storage for (ns,neta) = (256,255)
-            bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-        else:
-            bases = None
-        domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method}
-        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain)
+    error_only = not plot_fields
+    ns, neta = 1024, 1025
+    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    if Lmax*Nmax < 2400:  # About 6GB in basis storage for four fields at (ns,neta) = (256,255)
+        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
     else:
-        onpick = None
+        bases = None
+    domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method,
+              'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=error_only)
 
     fig, ax = plot_spectrum(evalues, onpick)
     ax.set_title('Boussinesq Eigenvalues')
@@ -613,19 +621,22 @@ def rotation_configs():
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 180},
-            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 280, 'Nmax': 280}
+            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 100, 'Nmax': 100},
+            {'Ekman': 10**-9, 'm': 300, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
+            {'Ekman': 10**-10, 'm': 646, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
+            {'Ekman': 10**-11, 'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
             ]
 
 def main():
     solve = True
     plot_spy = False
-    plot_evalues = True
-    plot_fields = True
+    plot_evalues = False
+    plot_fields = False
     boundary_method = 'galerkin'
 #    nev = 'all'
     nev = 10
 
-    config_index = -1
+    config_index = -2
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
