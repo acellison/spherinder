@@ -38,12 +38,13 @@ def expand(basis, coeffs):
     return f
 
 
-def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None):
+def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None, dtype='float64', internal='float64'):
     """Expand the coefficient vector to grid space"""
     Lmax, Nmax = np.shape(coeffs)
     ns, neta = len(s), len(eta)
-    f = np.zeros((neta,ns), dtype=coeffs.dtype)
+    f = np.zeros((neta,ns), dtype=internal)
 
+    s, eta = s.astype(internal), eta.astype(internal)
     t = 2*s**2 - 1
     tt = t[np.newaxis,:]
     if basis_kind in ['galerkin', 'phi']:
@@ -53,16 +54,16 @@ def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None)
     else:
         scale = 1
 
-    Peta = Jacobi.polynomials(Lmax,alpha,alpha,eta)
+    Peta = Jacobi.polynomials(Lmax,alpha,alpha,eta,dtype=internal)
     sm = (1+tt)**((m+sigma)/2)
     onems = (1-tt)**(1/2)
     for ell in range(Lmax):
         Pell = Peta[ell,:][:,np.newaxis]
-        Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t)
+        Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
         spart = sm * onems**ell
         for k in range(Nmax):
             f += scale * ((coeffs[ell,k] * Pell) * (spart * Ps[k,:]))
-    return f
+    return f.astype(dtype)
 
 
 def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):
