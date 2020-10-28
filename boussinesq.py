@@ -3,6 +3,16 @@ import scipy.sparse as sparse
 from dedalus_sphere import ball128
 from dedalus_sphere import sphere128
 
+
+def make_Q(ell_range,R_max):
+    Q = {}
+    for ell in ell_range:
+        Q[(ell,0)] = np.array([[1]])
+        for deg in range(1,R_max+1):
+            Q[(ell,deg)] = ball128.recurseQ(Q[(ell,deg-1)],ell,deg)
+    return Q
+
+
 def BC_rows(N):
     N0 = N
     N1 = N + N0 + 1
@@ -14,29 +24,39 @@ def BC_rows(N):
 
 def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,implicit_base_temp=True,unscaled=False,boundary_condition='stress-free'):
 
+    def op(op_name,N,k,ell,a=B.a,dtype=np.float64):
+        return ball128.operator(op_name,N,k,ell,a=a).astype(dtype)
+
+    def xi(mu,ell):
+        # returns xi for ell > 0 or ell = 0 and mu = +1
+        # otherwise returns 0.
+        if (ell > 0) or (ell == 0 and mu == 1):
+            return ball128.xi(mu,ell)
+        return 0.
+
     def D(mu,i,deg):
-        if mu == +1: return B.op('D+',N,i,ell+deg)
-        if mu == -1: return B.op('D-',N,i,ell+deg)
+        if mu == +1: return op('D+',N,i,ell+deg)
+        if mu == -1: return op('D-',N,i,ell+deg)
 
     def R(mu,i,deg):
         """Multiplication by r"""
-        if mu == +1: return B.op('R+',N,i,ell+deg)
-        if mu == -1: return B.op('R-',N,i,ell+deg)
+        if mu == +1: return op('R+',N,i,ell+deg)
+        if mu == -1: return op('R-',N,i,ell+deg)
 
-    def E(i,deg): return B.op('E',N,i,ell+deg)
+    def E(i,deg): return op('E',N,i,ell+deg)
 
     def C(deg): return ball128.connection(N,ell+deg,alpha_BC,2)
 
-    Z = B.op('0',N,0,ell)
+    Z = op('0',N,0,ell)
 
     N0, N1, N2, N3, N4 = BC_rows(N)
 
     if ell == 0:
-        I = B.op('I',N,0,ell).tocsr()
+        I = op('I',N,0,ell).tocsr()
         M44 = Prandtl*E(1, 0).dot(E( 0, 0))
 
         if implicit_base_temp:
-            L42 = -Prandtl *  B.xi(+1, ell) * E(1, 0).dot(E(0, 0).dot(R(-1, 0, +1)))
+            L42 = -Prandtl *  xi(+1, ell) * E(1, 0).dot(E(0, 0).dot(R(-1, 0, +1)))
         else:
             L42 = Z
 
@@ -51,7 +71,7 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
                          [Z,Z,Z,I,Z],
                          [Z,Z,L42,Z,-D(-1,1,+1).dot(D(+1, 0, 0))]]).tocsr()
 
-        row0=np.concatenate(( np.zeros(N3+1), B.op('r=1',N,0,ell) ))
+        row0=np.concatenate(( np.zeros(N3+1), op('r=1',N,0,ell) ))
 
         tau0 = C(0)[:,-1]
         tau0 = tau0.reshape((len(tau0),1))
@@ -69,7 +89,7 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
 
         return M, L
 
-    xim, xip = B.xi([-1,+1],ell)
+    xim, xip = xi([-1,+1],ell)
 
     M00 = Ekman*E(1,-1).dot(E( 0,-1))
     M11 = Ekman*E(1, 0).dot(E( 0, 0))
@@ -116,33 +136,35 @@ def matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC=0,implicit_buoyancy=True,im
                    [L40,  Z, L42,   Z, L44]])
     L = L.tocsr()
 
-    Q = B.Q[(ell,2)]
-    if ell == 1: rDmm = 0.*B.op('r=1',N,1,ell)
-    else: rDmm = B.xi(-1,ell-1)*B.op('r=1',N,1,ell-2)*D(-1,0,-1)
-    rDpm = B.xi(+1,ell-1)*B.op('r=1',N,1,ell  )*D(+1,0,-1)
-    rDm0 = B.xi(-1,ell  )*B.op('r=1',N,1,ell-1)*D(-1,0, 0)
-    rDp0 = B.xi(+1,ell  )*B.op('r=1',N,1,ell+1)*D(+1,0, 0)
-    rDmp = B.xi(-1,ell+1)*B.op('r=1',N,1,ell  )*D(-1,0,+1)
-    rDpp = B.xi(+1,ell+1)*B.op('r=1',N,1,ell+2)*D(+1,0,+1)
+    Qdict = make_Q([ell],2)
+    Q1 = Qdict[(ell,1)]
+    Q2 = Qdict[(ell,2)]
 
+    if ell == 1: rDmm = 0.*op('r=1',N,1,ell)
+    else: rDmm = xi(-1,ell-1)*op('r=1',N,1,ell-2)*D(-1,0,-1)
+    rDpm = xi(+1,ell-1)*op('r=1',N,1,ell  )*D(+1,0,-1)
+    rDm0 = xi(-1,ell  )*op('r=1',N,1,ell-1)*D(-1,0, 0)
+    rDp0 = xi(+1,ell  )*op('r=1',N,1,ell+1)*D(+1,0, 0)
+    rDmp = xi(-1,ell+1)*op('r=1',N,1,ell  )*D(-1,0,+1)
+    rDpp = xi(+1,ell+1)*op('r=1',N,1,ell+2)*D(+1,0,+1)
     rD = np.array([rDmm, rDm0, rDmp, 0.*rDmm, 0.*rDm0, 0.*rDmp, rDpm, rDp0, rDpp])
-    QSm = Q[:,::3].dot(rD[::3])
-    QS0 = Q[:,1::3].dot(rD[1::3])
-    QSp = Q[:,2::3].dot(rD[2::3])
-    u0m = B.op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
-    u0p = B.op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
+    QSm = Q2[:,::3].dot(rD[::3])
+    QS0 = Q2[:,1::3].dot(rD[1::3])
+    QSp = Q2[:,2::3].dot(rD[2::3])
+    u0m = op('r=1',N,0,ell-1)*Q1[1,0]
+    u0p = op('r=1',N,0,ell+1)*Q1[1,2]
 
     if boundary_condition == 'stress-free':
         row0=np.concatenate(( QSm[1]+QSm[3], QS0[1]+QS0[3] , QSp[1]+QSp[3], np.zeros(N4-N2)))
         row1=np.concatenate(( u0m          , np.zeros(N0+1), u0p          , np.zeros(N4-N2)))
         row2=np.concatenate(( QSm[5]+QSm[7], QS0[5]+QS0[7] , QSp[5]+QSp[7], np.zeros(N4-N2)))
     elif boundary_condition == 'no-slip':
-        row0 = np.concatenate((                B.op('r=1', N, 0, ell-1), np.zeros(N4-N0)))
-        row1 = np.concatenate((np.zeros(N0+1), B.op('r=1', N, 0, ell),   np.zeros(N4-N1)))
-        row2 = np.concatenate((np.zeros(N1+1), B.op('r=1', N, 0, ell+1), np.zeros(N4-N2)))
+        row0 = np.concatenate((                op('r=1', N, 0, ell-1), np.zeros(N4-N0)))
+        row1 = np.concatenate((np.zeros(N0+1), op('r=1', N, 0, ell),   np.zeros(N4-N1)))
+        row2 = np.concatenate((np.zeros(N1+1), op('r=1', N, 0, ell+1), np.zeros(N4-N2)))
     else:
         raise ValueError('Unknown boundary condition')
-    row3=np.concatenate(( np.zeros(N3+1), B.op('r=1',N,0,ell) ))
+    row3=np.concatenate(( np.zeros(N3+1), op('r=1',N,0,ell) ))
 
     tau0 = C(-1)[:,-1]
     tau1 = C( 0)[:,-1]
@@ -230,7 +252,9 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
 
     def op(handle, m, s):
         """Get an operator from the sphere and make it dense for ravel()"""
-        return B.S.op(handle, m, s).todense()
+        return sphere128.operator(handle, L_max, m, s).todense().astype(np.float64)
+
+    Qdict = make_Q(range(L_max+1),R_max=1)
 
     # Compute ez cross u in coefficient space
     for m in range(m_start, m_end+1):
@@ -249,7 +273,7 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
                 ell_local = ell-ell_range[0]
                 if ell_local >= nn:
                     break
-                Qell = B.Q[(ell,1)]
+                Qell = Qdict[(ell,1)]
                 QTell = Qell.T
 
                 vmind = lrm2ind(ell, vmoff(ell) + n, m)

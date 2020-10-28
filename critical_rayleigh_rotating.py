@@ -1,4 +1,5 @@
 from dedalus_sphere import ball_wrapper as ball
+from dedalus_sphere import ball128
 import dedalus.public as de
 from dedalus.core.distributor import Distributor
 import numpy as np
@@ -18,7 +19,28 @@ import pickle, os, glob
 
 g_file_prefix = 'critical_rayleigh_rotating'
 
-def build_ball(L_max, N_max):
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+
+def build_ball_lazy(L_max, N_max):
+    R_max = 3
+    m_start, m_end = 0, L_max
+    ell_start, ell_end = 0, L_max
+
+    # Don't actually construct the ball, just hold the configuraiton in an attribute dictionary.
+    # Saves on memory while performing the eigensolve
+    B = AttrDict({'N_max':N_max, 'L_max':L_max, 'R_max':R_max, 'ell_min':ell_start, 'ell_max':ell_end, 'm_min':m_start, 'm_max':m_end, 'a':0.})
+
+    # Make domain
+    domain = None
+
+    return B, domain
+
+
+def build_ball_full(L_max, N_max):
     R_max = 3
     L_dealias = 1
     N_dealias = 1
@@ -48,24 +70,28 @@ def build_ball(L_max, N_max):
     # set up ball
     N_theta = int((L_max+1)*L_dealias)
     N_r     = int((N_r+1)*N_dealias)
+
     B = ball.Ball(N_max,L_max,N_theta=N_theta,N_r=N_r,R_max=R_max,ell_min=ell_start,ell_max=ell_end,m_min=m_start,m_max=m_end,a=0.)
 
     return B, domain
 
 
 def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundary_condition):
+    def op(op_name,N,k,ell,a=B.a,dtype=np.float64):
+        return ball128.operator(op_name,N,k,ell,a=a).astype(dtype)
+
     M, L, E = [], [], []
     for ell in ell_range:
-        N = B.N_max - B.N_min(ell-B.R_max)
+        N = B.N_max - ball128.N_min(ell-B.R_max)
         M_ell, L_ell = boussinesq.matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC,implicit_buoyancy=True,implicit_base_temp=True,boundary_condition=boundary_condition)
         M.append(M_ell.astype(np.complex128))
         L.append(L_ell.astype(np.complex128))
 
         # Conversion matrices for Coriolis
-        Em = B.op('E',N,1,ell-1).dot(B.op('E',N,0,ell-1))
-        E0 = B.op('E',N,1,ell  ).dot(B.op('E',N,0,ell  ))
-        Ep = B.op('E',N,1,ell+1).dot(B.op('E',N,0,ell+1))
-        Z = B.op('0',N,0,ell)
+        Em = op('E',N,1,ell-1).dot(op('E',N,0,ell-1))
+        E0 = op('E',N,1,ell  ).dot(op('E',N,0,ell  ))
+        Ep = op('E',N,1,ell+1).dot(op('E',N,0,ell+1))
+        Z = op('0',N,0,ell)
 
         # For ell = 0 set u = 0
         if ell == 0:
@@ -418,8 +444,11 @@ def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_fact
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    plot_fields = True
+    plot_fields = False
     if plot_fields:
+        # Build the full domain for field plotting
+        print(f'Building ball: m = {m}, Lmax = {B.L_max}, Nmax = {B.N_max}', flush=True)
+        B, domain = build_ball_full(L_max=B.L_max, N_max=B.N_max)
         onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
     else:
         onpick = None
@@ -462,10 +491,7 @@ def compute_eigensolutions():
     for config in configs:
         # Extract the domain parameters
         m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
-
-        # Build the domain
-        print(f'Building ball: m = {m}, Lmax = {L_max}, Nmax = {N_max}', flush=True)
-        B, domain = build_ball(L_max=L_max, N_max=N_max)
+        B, domain = build_ball_lazy(L_max=L_max, N_max=N_max)
 
         # Solve the eigenproblem
         if solve:
