@@ -235,8 +235,6 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
     L_max, N_max, R_max = B.L_max, B.N_max, B.R_max
     m_start = B.m_min if m_min is None else m_min
     m_end = B.m_max if m_max is None else m_max
-    if B.ell_min != 0 or B.ell_max != L_max:
-        raise ValueError('Cannot parallelize in ell!')
 
     lrm2ind = state_vector.indexer('u')
 

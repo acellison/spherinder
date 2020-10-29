@@ -25,10 +25,10 @@ class AttrDict(dict):
         self.__dict__ = self
 
 
-def build_ball_lazy(L_max, N_max):
+def build_ball_lazy(m, L_max, N_max):
     R_max = 3
-    m_start, m_end = 0, L_max
-    ell_start, ell_end = 0, L_max
+    m_start, m_end = m, m
+    ell_start, ell_end = m, L_max
 
     # Don't actually construct the ball, just hold the configuraiton in an attribute dictionary.
     # Saves on memory while performing the eigensolve
@@ -40,10 +40,10 @@ def build_ball_lazy(L_max, N_max):
     return B, domain
 
 
-def build_ball_full(L_max, N_max):
+def build_ball_full(m, L_max, N_max, L_factor=1, N_factor=1):
     R_max = 3
-    L_dealias = 1
-    N_dealias = 1
+    L_dealias = L_factor
+    N_dealias = N_factor
     N_r = N_max
 
     # Find MPI rank
@@ -147,180 +147,6 @@ def build_matrices(B, m, L, M, C, Ekman, Prandtl, Rayleigh):
     return Amat, Bmat
 
 
-def plot_spectral_decay(u, p, T, B, m, Ekman, Rayleigh, save_plots):
-    basepath = os.path.dirname(__file__)
-    filename = lambda field: os.path.join(basepath, 'figures/boussinesq-coeffs-m={}-Lmax={}-Nmax={}-Ekman={:1.4e}-Rayleigh={:1.9e}-kind={}'\
-            .format(m, B.L_max, B.N_max, Ekman, Rayleigh,  field))
-
-
-    if save_plots:
-        def savefig(fn): plt.savefig(fn + '.png')
-    else:
-        def savefig(_): pass
-
-    plt.figure()
-    Tradial = []
-    for ell in range(m, B.L_max + 1):
-        Tradial.append(np.array([np.abs(T['c'][ell][n, m]) for n in range(np.shape(T['c'][ell])[0])]))
-    factor = 1 / np.max(Tradial[0])
-    for i in range(len(Tradial)):
-        Tradial[i] *= factor
-    for i in range(len(Tradial)):
-        plt.semilogy(Tradial[i])
-    plt.grid(True)
-    plt.title('Magnitude of radial coefficients for each harmonic degree')
-    plt.xlabel('Radial degree')
-    savefig(filename('radial'))
-
-    def plot_radial_norm(field, rank=0, a=0):
-        Tell = []
-        ell_range = range(m, B.L_max + 1)
-
-        for ell in ell_range:
-            nsize = np.shape(field['c'][ell])[0]
-            n1 = a * (nsize // 3 ** rank)
-            n2 = (a + 1) * (nsize // 3 ** rank)
-            Tell.append(np.linalg.norm(field['c'][ell][n1:n2, m]))
-        Tell = np.array(Tell)
-        Tell /= max(Tell)
-        plt.semilogy(ell_range, Tell)
-        plt.grid(True)
-        plt.title('Norm of radial coefficients for each harmonic degree')
-        plt.xlabel('Harmonic degree l')
-
-    plt.figure()
-    plot_radial_norm(T)
-    savefig(filename('ell'))
-
-
-def plot_chebyshev_decay(field, r, theta, phi, m, Ekman, Rayleigh, save_plots):
-    if save_plots:
-        def savefig(fn): plt.savefig(fn + '.png')
-    else:
-        def savefig(_): pass
-
-    def chebgrid(n):
-        return np.cos((np.arange(0, n + 1) + 0.5) * np.pi / (n + 1))
-
-    basepath = os.path.dirname(__file__)
-    filename = lambda suff: os.path.join(basepath, 'figures/boussinesq-chebyshev-coeffs-m={}-Ekman={:1.4e}-Rayleigh={:1.9e}-{}'\
-            .format(m, Ekman, Rayleigh, suff))
-
-    sfix, zfix = 0.5768, 0.0
-    method = 'cubic'
-    nx, nz = 256, 256
-
-    # Create evaluation points
-    z_eval = chebgrid(nz)
-    z_eval *= (1 - sfix**2)**.5 * .998
-    xi = np.array([[sfix, z] for z in z_eval])
-
-    # Interpolate
-    zresult = interpolate(field, r, theta, phi, xi, method=method)
-    dctz = fft.dct(zresult)
-
-    # Create evaluation points
-    x_eval = 0.5*(chebgrid(nx)+1)
-    x_eval *= (1 - zfix**2)**.5 * .998
-    xi = np.array([[x, zfix] for x in x_eval])
-
-    # Interpolate
-    xresult = interpolate(field, r, theta, phi, xi, method=method)
-    dctx = fft.dct(xresult)
-
-    fig, plot_axes = plt.subplots(1, 2, figsize=[12.8,4.8])
-    plot_axes[0].plot(z_eval, zresult)
-    plot_axes[0].grid()
-    plot_axes[0].set_xlabel('z')
-    plot_axes[0].set_ylabel('T')
-    plot_axes[0].set_title('Axial Temperature Field, s={}'.format(sfix))
-    plot_axes[1].semilogy(abs(dctz)/max(abs(dctz)))
-    plot_axes[1].grid()
-    plot_axes[1].set_xlabel('n')
-    plot_axes[1].set_ylabel('log magnitude')
-    plot_axes[1].set_title('Chebyshev Coefficient Magnitude')
-    savefig(filename('axial'))
-
-    fig, plot_axes = plt.subplots(1, 2, figsize=[12.8,4.8])
-    plot_axes[0].plot(x_eval, xresult)
-    plot_axes[0].grid()
-    plot_axes[0].set_xlabel('s')
-    plot_axes[0].set_ylabel('T')
-    plot_axes[0].set_title('Radial Temperature Field, z={}'.format(zfix))
-    plot_axes[1].semilogy(abs(dctx)/max(abs(dctx)))
-    plot_axes[1].grid()
-    plot_axes[1].set_xlabel('n')
-    plot_axes[1].set_ylabel('log magnitude')
-    plot_axes[1].set_title('Chebyshev Coefficient Magnitude')
-    savefig(filename('radial'))
-
-
-def rayleigh_bisection(B, m, Lunscaled, Munscaled, Cor, lam, v, Ekman, Prandtl, Rayleigh, bracket_scale=1.1,
-                       newton_tol=1e-9, bisect_tol=1e-3, max_newton_iters=12, max_bisect_iters=12, verbose=False):
-    if max_bisect_iters == 0:
-        return lam, v, Rayleigh
-
-    matsolver = 'SuperluNaturalSpsolve'
-
-    eig = lambda Amat, Bmat, lam, v: track_eigenpair(Amat, Bmat, lam, v, matsolver=matsolver, tol=newton_tol,
-                                                     maxiter=max_newton_iters, verbose=verbose)
-
-    # Check current Rayleigh number
-    print('  Building matrices to bracket the critical Rayleigh number...', flush=True)
-    Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-
-    print('  Computing initial eigenpair...', flush=True)
-    lam, v = eig(Amat, Bmat, lam, v)
-
-    print('  Bracketing critical Rayleigh number for Ekman = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Ekman, lam), flush=True)
-    Ra_min, Ra_max = Rayleigh, Rayleigh
-    moveup = lam.real < 0
-    if moveup:
-        while lam.real <= 0:
-            Rayleigh *= bracket_scale
-            Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-
-            lam, v = eig(Amat, Bmat, lam, v)
-            Ra_min = Ra_max
-            Ra_max = Rayleigh
-            print('    Rayleigh = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Rayleigh, lam), flush=True)
-    else:
-        while lam.real >= 0:
-            Rayleigh /= bracket_scale
-            Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-
-            lam, v = eig(Amat, Bmat, lam, v)
-            Ra_max = Ra_min
-            Ra_min = Rayleigh
-            print('    Rayleigh = {:1.5e},  Eigenvalue = {:1.5e}...'.format(Rayleigh, lam), flush=True)
-
-    print('  Bisection brackets for critical Rayleigh number: {}'.format((Ra_min,Ra_max)), flush=True)
-    iter, done = 0, False
-    while not done:
-        iter += 1
-        Rayleigh = 0.5 * (Ra_min + Ra_max)
-
-        # Build the matrices for the updated Rayleigh number
-        print('  Bisection Iteration: {:3d},  Building matrices for Rayleigh = {:1.9e}'.format(iter, Rayleigh), flush=True)
-        Amat, Bmat = build_matrices(B, m, Lunscaled, Munscaled, Cor, Ekman, Prandtl, Rayleigh)
-
-        # Track the eigenpair as Rayleigh changed
-        print('    Tracking eigenpair...', flush=True)
-        lam, v = eig(Amat, Bmat, lam, v)
-
-        # Update the bisection brackets
-        if np.real(lam) > 0:
-            Ra_max = Rayleigh
-        else:
-            Ra_min = Rayleigh
-
-        print('    Ekman: {:1.5e},  Rayleigh number: {:1.9e},  λ = {: 1.9e}'.format(iter, Ekman, Rayleigh, lam), flush=True)
-        done = np.abs(np.real(lam)) <= bisect_tol or iter >= max_bisect_iters
-
-    v = np.reshape(np.asarray(v.ravel()), np.prod(np.shape(v)))
-    return lam, v, Rayleigh
-
-
 def checkdir(filename):
     path = os.path.dirname(os.path.abspath(filename))
     if not os.path.exists(path):
@@ -377,6 +203,11 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
     t2 = time.time()
     print('    Non-dimensional scaling took {:g} sec'.format(t2-t1), flush=True)
 
+    if np.any(~np.isfinite(Amat.tocsr().data)):
+        warning('Warning: non-finite values in A matrix')
+    if np.any(~np.isfinite(Bmat.tocsr().data)):
+        warning('Warning: non-finite values in B matrix')
+
     time_end = time.time()
     print('    Complete system construction took {:g} sec'.format(time_end-time_start), flush=True)
 
@@ -384,7 +215,8 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
     if nev == 'all':
         evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), profile=True)
     else:
-        matsolver = 'UmfpackFactorized'
+#        matsolver = 'UmfpackFactorized'
+        matsolver = 'SuperluColamdFactorized'
 #        matsolver = None
         evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, matsolver=matsolver, profile=True)
 
@@ -398,27 +230,37 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
 
 
 def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
-    plot_velocity = True
+    plot_pressure = True
+    plot_temperature = False
+    plot_velocity = False
     evalue, evector = evalues[index], evectors[:,index]
 
     ntau = lambda ell: 1 if ell == 0 else 4
-    u = ball.TensorField_3D(1, B, domain)
-    p = ball.TensorField_3D(0, B, domain)
-    T = ball.TensorField_3D(0, B, domain)
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0),('T',0)], ntau=ntau, m_min=m, m_max=m)
-    state_vector.unpack(evector, [u, p, T])
 
-    # Upsample the result
-    res = max(256, max(B.L_max+1, B.N_max+1))
-    L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
+    names, fields = [], []
 
-    p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
-    T, _, _, _       = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
-    names, fields = ['p', 'T'], [p['g'][0], T['g'][0]]
+    # Collect fields, converting to grid space
+    if plot_pressure:
+        p = ball.TensorField_3D(0, B, domain)
+        state_vector.unpack(evector, {'p':p})
+        names += ['p']
+        fields += [p['g'][0]]
+    if plot_temperature:
+        T = ball.TensorField_3D(0, B, domain)
+        state_vector.unpack(evector, {'T':T})
+        names += ['T']
+        fields += [T['g'][0]]
     if plot_velocity:
-        u, _, _, _ = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
+        u = ball.TensorField_3D(1, B, domain)
+        state_vector.unpack(evector, {'u':u})
         names += ['u_r', 'u_θ', 'u_φ']
         fields += [u['g'][i] for i in [0,1,2]]
+
+    # Get coordinates
+    r, theta, phi = B.grid(1), B.grid(0), domain.grid(0, scales=domain.dealias)
+    r = r.reshape((1,1,np.prod(np.shape(r))))
+    theta = theta.reshape((1,np.prod(np.shape(theta)),1))
 
     angle = 0.
     # Plot velocity
@@ -444,11 +286,14 @@ def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_fact
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    plot_fields = False
+    plot_fields = True
     if plot_fields:
         # Build the full domain for field plotting
         print(f'Building ball: m = {m}, Lmax = {B.L_max}, Nmax = {B.N_max}', flush=True)
-        B, domain = build_ball_full(L_max=B.L_max, N_max=B.N_max)
+        res = max(256, max(B.L_max+1, B.N_max+1))
+        L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
+
+        B, domain = build_ball_full(m, B.L_max, B.N_max, L_factor, N_factor)
         onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
     else:
         onpick = None
@@ -468,7 +313,7 @@ def compute_eigensolutions():
 #    import warnings
 #    warnings.simplefilter("ignore")
 
-    solve = True
+    solve = False
     plot = True
 
     configs = [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 32,  'Nmax': 31},
@@ -479,19 +324,24 @@ def compute_eigensolutions():
                {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 152, 'Nmax': 101},
                {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
                {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201},
-               {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500}]
+               {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500},
+               {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1200, 'Nmax': 600}
+               ]
 
     boundary_condition = 'no-slip'
     # boundary_condition = 'stress-free'
-    nev = 3
+    nev = 10
     # nev = 'all'
     thermal_forcing_factor = 1
 
-    configs = [configs[-2]]
+    configs = [configs[1]]
     for config in configs:
         # Extract the domain parameters
         m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
-        B, domain = build_ball_lazy(L_max=L_max, N_max=N_max)
+        if L_max < m:
+            raise ValueError('No angular resolution: L_max (={}) is too small'.format(L_max))
+
+        B, domain = build_ball_lazy(m, L_max, N_max)
 
         # Solve the eigenproblem
         if solve:
@@ -505,220 +355,5 @@ def compute_eigensolutions():
     plt.show()
 
 
-def extract_radial_slice(field):
-    Ntheta = np.shape(field)[1]
-    signal = field[0,:,:]
-    if Ntheta % 2 == 1:
-        signal = 0.5*(signal[Ntheta//2-1,:] + signal[Ntheta//2,:])
-    else:
-        signal = signal[Ntheta//2,:]
-    return signal
-
-
-def count_zero_crossings(a):
-    return np.where(np.diff(np.sign([i for i in a if i])))[0].shape[0]
-
-
-def analyze_radial_field(r, theta, phi, field, Ekman, fieldname, doplot=True, npeaks=5, peak_level=10**-8, plotonly=False):
-    fit_kind = 'envelope'        # one of ['lsq', 'peak', 'envelope']
-    envelope_kind = 'peak'      # one of ['peak', 'analytic']
-
-    r, theta, phi = r.flatten(), theta.flatten(), phi.flatten()
-    Nr = len(r)
-
-    # Extract the phi=0, theta=pi/2 radial slice
-    signal = extract_radial_slice(field)
-
-    # Normalize so the peak points up
-    if np.max(signal) < -np.min(signal):
-        signal *= -1
-    signal /= np.max(abs(signal))
-    fitsig = np.log10(abs(signal))
-
-    # Compute the width of the peak
-    index_peak_start = np.argmax(abs(signal) > peak_level)
-    index_peak_end = Nr - 1 - np.argmax(abs(signal[::-1]) > peak_level)
-    peak_start, peak_end = r[index_peak_start], r[index_peak_end]
-    peak_width = peak_end - peak_start
-    peak_midpoint = (peak_start + peak_end)/2
-
-    # Plot
-    ekstr = '$10^{{{}}}$'.format(np.around(np.log10(Ekman), 1))
-    if plotonly:
-        fig, ax = plt.subplots()
-        ax.plot(r, signal)
-        ax.set_xlabel('s')
-        ax.set_ylabel(fieldname)
-        ax.set_title('{},  Ekman = {}'.format(fieldname, ekstr))
-        ax.grid()
-        fig.set_tight_layout(True)
-
-        outputdir = os.path.join(os.path.dirname(__file__), 'figures')
-        filename = os.path.join(outputdir, 'boussinesq_radial_slice-Ekman={:1.3e}-field={}.png'.format(Ekman, fieldname))
-        plt.savefig(filename, dpi=200)
-        return
-
-    # Compute the polynomial or envelope fit
-    if fit_kind == 'peak' or fit_kind == 'lsq':
-        p, fit = polyfit(r, fitsig, fit_kind, npeaks=npeaks, first=index_peak_start, final=index_peak_end)
-        fit = 10**np.polyval(p, r)
-        peak_location = -p[1]/(2*p[0])
-        peak_height = 10**np.polyval(p, peak_location)
-
-    elif fit_kind == 'envelope':
-        env = envelope(r, fitsig, envelope_kind, first=index_peak_start, final=index_peak_end, usehull=False)
-        fit = 10**env
-        peak_index = index_peak_start+np.argmax(fit[index_peak_start:index_peak_end+1])
-        peak_location, peak_height = r[peak_index], fit[peak_index]
-
-    else:
-        raise ValueError('Unknown fit_kind')
-
-    peak_indices, _ = ss.find_peaks(signal[index_peak_start:index_peak_end+1])
-    npeaks = len(peak_indices)
-    print('Ekman = {:1.3e},  Field = {},  Peak Location: s = {:1.6f},  Peak Width: s = {:1.6e},  Peak Midpoint: {:1.4f},'
-          '  Num Peaks: {}'
-          .format(Ekman, fieldname, peak_location, peak_width, peak_midpoint, npeaks))
-
-    if doplot:
-        fig, plot_axes = plt.subplots()
-        plot_axes.semilogy(r, abs(signal))
-        plot_axes.plot(r, fit, '--', color='C2')
-        plot_axes.plot(peak_location, peak_height, 'x', color='k')
-        plot_axes.grid()
-
-        plot_axes.set_title('log({}),  Ekman = {}'.format(fieldname, ekstr))
-        plot_axes.set_xlabel('s')
-        plot_axes.set_ylabel('log({})'.format(fieldname))
-
-        eps = 0.042
-        xlim = [-eps, 1+eps]
-        plot_axes.plot(xlim, [peak_level, peak_level], '--k')
-        plot_axes.set_xlim(xlim)
-        plot_axes.set_ylim([10**-9, 10])
-        fig.set_tight_layout(True)
-
-        outputdir = os.path.join(os.path.dirname(__file__), 'figures')
-        filename = os.path.join(outputdir, 'boussinesq_radial_slice-Ekman={:1.3e}-field={}.png'.format(Ekman, fieldname))
-        plt.savefig(filename, dpi=200)
-
-    result = {'location': peak_location, 'width': peak_width, 'midpoint': peak_midpoint,
-              'start': peak_start, 'end': peak_end, 'npeaks': npeaks}
-    return result
-
-
-def analyze_eigensolutions():
-    resolution = 256
-    peak_level = 10 ** -3
-
-    datadir = os.path.join(os.path.dirname(__file__), 'data')
-    datafiles = glob.glob(datadir+"/*.pckl")
-    print(datafiles)
-
-    # Load the pickle data
-    alldata = np.array([pickle.load(open(filename, 'rb')) for filename in datafiles])
-    Ekmans = [data['config']['Ekman'] for data in alldata]
-    indices = np.argsort(Ekmans)[::-1]
-    alldata = alldata[indices]
-
-    # Process each data
-    Ekmans, peak_locations, peak_widths, peak_midpoints, peak_counts = [], [], [], [], []
-    for data in alldata:
-        config = data['config']
-        m, L_max, N_max, Ekman, Rayleigh = config['m'], config['Lmax'], config['Nmax'], config['Ekman'], config['Rayleigh']
-        Ekmans.append(Ekman)
-
-        # Construct the domain
-        B, domain = build_ball(L_max=L_max, N_max=N_max)
-        ntau = lambda ell: 1 if ell == 0 else 4
-        fields = [('u', 1), ('p', 0), ('T', 0)]
-        state_vector = StateVector(B, 'mlr', fields, ntau=ntau, m_min=m, m_max=m)
-
-        # Unpack the solution
-        evec = data['evector']
-        u = ball.TensorField_3D(1, B, domain)
-        p = ball.TensorField_3D(0, B, domain)
-        T = ball.TensorField_3D(0, B, domain)
-        state_vector.unpack(evec, [u, p, T])
-
-        # Plot the temperature field
-        L_factor, N_factor = 1, np.ceil(resolution / (B.N_max + 1))
-        T, r, theta, phi = dealias(B, domain, T, L_factor=L_factor, N_factor=N_factor)
-        analyze_radial_field(r, theta, phi, T['g'][0], Ekman, fieldname='T', peak_level=peak_level, plotonly=True)
-
-        # Dealias and compute kinetic energy
-        L_factor, N_factor = 1, np.ceil(resolution / (B.N_max + 1))
-        u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-        ke = 0.5*(u['g'][0]**2 + u['g'][1]**2 + u['g'][2]**2)
-
-        # Find peak location and width for the signal
-        npeaks = 5
-        result = analyze_radial_field(r, theta, phi, ke, Ekman, fieldname='KE', doplot=True,
-                                      npeaks=npeaks, peak_level=peak_level)
-
-        peak_locations.append(result['location'])
-        peak_widths.append(result['width'])
-        peak_midpoints.append(result['midpoint'])
-        peak_counts.append(result['npeaks'])
-
-    ratios = np.zeros(len(alldata))
-    for i in range(len(alldata)):
-        m = alldata[i]['config']['m']
-        mscale = 2*np.pi/m * peak_locations[i]
-        sscale = peak_widths[i]/(peak_counts[i]/2)
-        ratios[i] = mscale/sscale
-
-    plot_azimuth_to_radius = True
-    if not plot_azimuth_to_radius:
-        ratios = 1/ratios
-
-    fig, plot_axes = plt.subplots()
-    plot_axes.semilogx(Ekmans, ratios, '--x')
-    plot_axes.set_xlabel('Ekman')
-    plot_axes.set_ylabel('Ratio')
-    if plot_azimuth_to_radius:
-        plot_axes.set_title('Azimuthal to Radial Scale Length Ratio')
-    else:
-        plot_axes.set_title('Radial to Azimuthal Scale Length Ratio')
-    plot_axes.grid()
-    fig.set_tight_layout(True)
-    outputdir = os.path.join(os.path.dirname(__file__), 'figures')
-    filename = os.path.join(outputdir, 'boussinesq_radial_vs_azimuthal_scaling.png')
-    plt.savefig(filename)
-
-    fig, plot_axes = plt.subplots(1,2, figsize=(9,4))
-    plot_axes[0].semilogx(Ekmans, peak_locations, '--x', label='estimate')
-    plot_axes[0].semilogx(Ekmans, peak_midpoints, '--x', label='midpoint')
-    plot_axes[0].set_title('Peak Location')
-    plot_axes[0].legend()
-
-    plot_axes[1].semilogx(Ekmans, peak_widths, '--x', label='KE')
-    plot_axes[1].set_title('Peak Width')
-    for ax in plot_axes:
-        ax.set_xlabel('Ekman')
-        ax.set_ylabel('s')
-        ax.grid()
-    fig.set_tight_layout(True)
-    outputdir = os.path.join(os.path.dirname(__file__), 'figures')
-    filename = os.path.join(outputdir, 'boussinesq_radial_scaling.png')
-    plt.savefig(filename)
-
-    fig, plot_axes = plt.subplots()
-    sm = 0.5915
-    plot_axes.semilogx(Ekmans, np.array(peak_locations) - sm, '--x', label='KE')
-    plot_axes.set_title('Distance from Peak Location to Jones Solution $s_M = {}$'.format(sm))
-    plot_axes.set_xlabel('Ekman')
-    plot_axes.set_ylabel('$s_c - s_M$')
-    plot_axes.grid()
-    fig.set_tight_layout(True)
-
-    outputdir = os.path.join(os.path.dirname(__file__), 'figures')
-    filename = os.path.join(outputdir, 'boussinesq_radial_scaling-difference.png')
-    plt.savefig(filename)
-
-    plt.show()
-
-
 if __name__=='__main__':
     compute_eigensolutions()
-    # analyze_eigensolutions()
