@@ -2,6 +2,7 @@ from dedalus_sphere import ball_wrapper as ball
 from dedalus.extras import plot_tools
 from mpi4py import MPI
 import numpy as np
+import copy
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
@@ -179,7 +180,7 @@ def plotequatorialslice(field, r, theta, phi, cmap=None):
 
     if cmap is None:
         cmap = 'RdBu'
-    cmap = plt.get_cmap(cmap)
+    cmap = copy.copy(plt.get_cmap(cmap))
     cmap.set_bad(color='grey', alpha=.5)
     c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
     plot_axes.plot((1 + eps / 2) * np.sin(phi), (1 + eps / 2) * np.cos(phi), color='k', linewidth=1)
@@ -223,7 +224,7 @@ def plotmeridionalslice(field, r, theta, phi, angle=0., stretch=False, cmap=None
 
     if cmap is None:
         cmap = 'RdBu'
-    cmap = plt.get_cmap(cmap)
+    cmap = copy.copy(plt.get_cmap(cmap))
     cmap.set_bad(color='grey', alpha=.5)
     c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
 
