@@ -175,13 +175,10 @@ class StateVector:
                 v[inds] = field['c'][ell][:n_size, m_range].ravel()
         return v
 
-    def unpack(self, v, fields):
-        if len(fields) != len(self.field_names):
-            raise ValueError('Incorrect number of fields to pack!')
-        for i in range(len(self.field_names)):
-            name = self.field_names[i]
+    def unpack(self, v, fielddict):
+        for name, field in fielddict.items():
+            i = self.field_names.index(name)
             rank = self.field_ranks[i]
-            field = fields[i]
             if field.rank != rank:
                 raise ValueError('Incorrect rank of field.  Are the fields sorted correctly?')
             field.layout = 'c'
