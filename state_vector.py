@@ -17,6 +17,8 @@ class StateVector:
            :param ntau: function handle that returns number of boundary conditions for a given ell
            :param truncate: indicate whether or not to discard invalid coefficients (m > ell)
         """
+        self.B = B
+
         if np.ndim(fields) == 1:
             fields = [fields]
         self.field_names, self.field_ranks = zip(*fields)
@@ -146,10 +148,7 @@ class StateVector:
         indexers['tau'] = make_indexer('tau')
         self._indexers = indexers
 
-    def pack(self, fields, output=None):
-        if len(fields) != len(self.field_names):
-            raise ValueError('Incorrect number of fields to pack!')
-
+    def pack(self, fielddict, output=None):
         if output is None:
             v = np.zeros(self.dof, dtype=np.complex128)
         else:
@@ -157,12 +156,9 @@ class StateVector:
                 raise ValueError('Incorrect output size')
             v = output
 
-        for i in range(len(self.field_names)):
-            name = self.field_names[i]
+        for name, field in fielddict.items():
+            i = self.field_names.index(name)
             rank = self.field_ranks[i]
-            field = fields[i]
-            if field.rank != rank:
-                raise ValueError('Incorrect rank of field.  Are the fields sorted correctly?')
 
             indexer = self.indexer(name)
             ell_start = self.ell_start
@@ -172,17 +168,15 @@ class StateVector:
                 m_range = range(self.m_start, self.m_start+m_size)
                 n_size = 3**rank*self.n_size[ell]
                 inds = [indexer(ell, r, m) for r in range(n_size) for m in m_range]
-                v[inds] = field['c'][ell][:n_size, m_range].ravel()
+                v[inds] = field[ell][:n_size, m_range].ravel()
         return v
 
     def unpack(self, v, fielddict):
         for name, field in fielddict.items():
             i = self.field_names.index(name)
             rank = self.field_ranks[i]
-            if field.rank != rank:
-                raise ValueError('Incorrect rank of field.  Are the fields sorted correctly?')
-            field.layout = 'c'
 
+            B = self.B
             indexer = self.indexer(name)
             ell_start = self.ell_start
             for ell in range(ell_start, self.L_max+1):
@@ -191,5 +185,8 @@ class StateVector:
                 m_range = range(self.m_start, self.m_start+m_size)
                 n_size = 3**rank*self.n_size[ell]
                 inds = [indexer(ell, r, m) for r in range(n_size) for m in m_range]
-                field['c'][ell][:n_size, m_range] = np.reshape(v[inds], (n_size, m_size))
+
+                ell_local = ell-B.ell_min
+                m_local = range(self.m_start-B.m_min, self.m_start+m_size-B.m_min)
+                field[ell_local][:n_size, m_local] = np.reshape(v[inds], (n_size, m_size))
 

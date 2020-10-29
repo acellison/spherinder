@@ -99,11 +99,11 @@ def test_state_vector(layout, m_min=None, m_max=None, truncate=True):
     ntau = lambda ell: 1 if ell == 0 else 4
     state_vector = StateVector(B, layout, [('u', 1), ('p', 0)], ntau=ntau, m_min=m_min, m_max=m_max, truncate=truncate)
 
-    v = state_vector.pack([u1full, p1full])
+    v = state_vector.pack({'u':u1full['c'], 'p':p1full['c']})
 
     u2 = ball.TensorField_3D(1,B,domain)
     p2 = ball.TensorField_3D(0,B,domain)
-    state_vector.unpack(v, [u2, p2])
+    state_vector.unpack(v, {'u':u2['c'], 'p':p2['c']})
 
     for ell in range(B.L_max):
         assert np.all(u2['c'][ell] == u1['c'][ell])

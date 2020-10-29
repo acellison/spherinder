@@ -272,7 +272,7 @@ def inertial_waves(B, m, domain):
         # Unpack the eigenvector into our tensor fields
         u = ball.TensorField_3D(1, B, domain)
         p = ball.TensorField_3D(0, B, domain)
-        state_vector.unpack(evec, [u, p])
+        state_vector.unpack(evec, {'u':u['c'], 'p':p['c']})
 
         angle = 0.
         filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)

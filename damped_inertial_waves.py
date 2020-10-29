@@ -271,7 +271,7 @@ def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
     u = ball.TensorField_3D(1, B, domain)
     p = ball.TensorField_3D(0, B, domain)
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
-    state_vector.unpack(evector, [u, p])
+    state_vector.unpack(evector, {'u':u['c'], 'p':p['c']})
 
     # Upsample the result
     res = 256
