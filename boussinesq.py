@@ -248,6 +248,14 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
     QTrows, QTcols, QTvals = [], [], []
     Mrows, Mcols, Mvals = [], [], []
 
+    def append_mats(r,c,v,Mr,Mc,Mv):
+        nz = np.nonzero(v)[0]
+        Mr += np.asarray(r)[nz].tolist()
+        Mc += np.asarray(c)[nz].tolist()
+        Mv += np.asarray(v)[nz].tolist()
+
+    append = lambda r,c,v: append_mats(r,c,v,Mrows,Mcols,Mvals)
+
     def op(handle, m, s):
         """Get an operator from the sphere and make it dense for ravel()"""
         return sphere128.operator(handle, L_max, m, s).todense().astype(np.float64)
@@ -291,31 +299,37 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
                 e0cols = [lrm2ind(k+ell_range[0], v0off(k+ell_range[0]) + n, m) for k in range(nn)]*(nn-1)
 
                 # Spin e(-) output
-                Mrows += flatten([[lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m)]*(nn-1) for k in range(1,nn)])
-                Mcols += [lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*(nn-1)
-                Mvals += np.ravel(Cm[:nn-1,:nn-1]).tolist()
+                r = flatten([[lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m)]*(nn-1) for k in range(1,nn)])
+                c = [lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*(nn-1)
+                v = np.ravel(Cm[:nn-1,:nn-1]).tolist()
+                append(r,c,v)
 
-                Mrows += flatten([[lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m)]*nn for k in range(1,nn)])
-                Mcols += e0cols
-                Mvals += np.ravel(Sm0[:nn-1,:nn]).tolist()
+                r = flatten([[lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m)]*nn for k in range(1,nn)])
+                c = e0cols
+                v = np.ravel(Sm0[:nn-1,:nn]).tolist()
+                append(r,c,v)
 
                 # Spin e(0) output
-                Mrows += e0rows
-                Mcols += [lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*nn
-                Mvals += np.ravel(Spm[:nn,:nn-1]).tolist()
+                r = e0rows
+                c = [lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*nn
+                v = np.ravel(Spm[:nn,:nn-1]).tolist()
+                append(r,c,v)
 
-                Mrows += e0rows
-                Mcols += [lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*nn
-                Mvals += np.ravel(Smp[:nn,:nn-1]).tolist()
+                r = e0rows
+                c = [lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*nn
+                v = np.ravel(Smp[:nn,:nn-1]).tolist()
+                append(r,c,v)
 
                 # Spin e(+) output
-                Mrows += flatten([[lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m)]*nn for k in range(1,nn)])
-                Mcols += e0cols
-                Mvals += np.ravel(Sp0[:nn-1,:nn]).tolist()
+                r = flatten([[lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m)]*nn for k in range(1,nn)])
+                c = e0cols
+                v = np.ravel(Sp0[:nn-1,:nn]).tolist()
+                append(r,c,v)
 
-                Mrows += flatten([[lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m)]*(nn-1) for k in range(1,nn)])
-                Mcols += [lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*(nn-1)
-                Mvals += np.ravel(Cp[:nn-1,:nn-1]).tolist()
+                r = flatten([[lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m)]*(nn-1) for k in range(1,nn)])
+                c = [lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m) for k in range(1,nn)]*(nn-1)
+                v = np.ravel(Cp[:nn-1,:nn-1]).tolist()
+                append(r,c,v)
 
             else:
                 vmrowinds = flatten([[lrm2ind(k+ell_range[0], vmoff(k+ell_range[0]) + n, m)]*nn for k in range(nn)])
@@ -327,31 +341,37 @@ def create_coriolis_matrix(B, state_vector, m_min=None, m_max=None):
                 vpcolinds = [lrm2ind(k+ell_range[0], vpoff(k+ell_range[0]) + n, m) for k in range(nn)]*nn
 
                 # Spin e(-) output
-                Mrows += vmrowinds
-                Mcols += vmcolinds
-                Mvals += np.ravel(Cm[:nn,:nn]).tolist()
+                r = vmrowinds
+                c = vmcolinds
+                v = np.ravel(Cm[:nn,:nn]).tolist()
+                append(r,c,v)
 
-                Mrows += vmrowinds
-                Mcols += v0colinds
-                Mvals += np.ravel(Sm0[:nn,:nn]).tolist()
+                r = vmrowinds
+                c = v0colinds
+                v = np.ravel(Sm0[:nn,:nn]).tolist()
+                append(r,c,v)
 
                 # Spin e(0) output
-                Mrows += v0rowinds
-                Mcols += vmcolinds
-                Mvals += np.ravel(Spm[:nn,:nn]).tolist()
+                r = v0rowinds
+                c = vmcolinds
+                v = np.ravel(Spm[:nn,:nn]).tolist()
+                append(r,c,v)
 
-                Mrows += v0rowinds
-                Mcols += vpcolinds
-                Mvals += np.ravel(Smp[:nn,:nn]).tolist()
+                r = v0rowinds
+                c = vpcolinds
+                v = np.ravel(Smp[:nn,:nn]).tolist()
+                append(r,c,v)
 
                 # Spin e(+) output
-                Mrows += vprowinds
-                Mcols += v0colinds
-                Mvals += np.ravel(Sp0[:nn,:nn]).tolist()
+                r = vprowinds
+                c = v0colinds
+                v = np.ravel(Sp0[:nn,:nn]).tolist()
+                append(r,c,v)
 
-                Mrows += vprowinds
-                Mcols += vpcolinds
-                Mvals += np.ravel(Cp[:nn,:nn]).tolist()
+                r = vprowinds
+                c = vpcolinds
+                v = np.ravel(Cp[:nn,:nn]).tolist()
+                append(r,c,v)
 
     # Throw away zeros
     inds = np.nonzero(Mvals)[0]
