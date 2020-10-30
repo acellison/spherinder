@@ -12,29 +12,26 @@ def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', interna
     ns, neta = len(s), len(eta)
     s = s.astype(internal)
     t = 2*s**2 - 1
+    tscale = (1+t)**((m+sigma)/2) * (1-t)**(ell/2)
 
     Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=internal)[-1,:][:,np.newaxis]
     Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-    tt = t[np.newaxis,:]
-    return [(Peta * (1+tt)**((m+sigma)/2) * (1-tt)**(ell/2) * Ps[k,:]).astype(dtype) for k in range(Nmax)]
+    return Peta.astype(dtype), (tscale * Ps).astype(dtype)
 
 
 def phi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
     """Galerkin basis function"""
-    ns, neta = len(s), len(eta)
-    ss = s.astype(internal)[np.newaxis,:]
     ee = eta.astype(internal)[:,np.newaxis]
-    scale = (1-ee**2) * (1-ss**2)
-    psi_basis = psi(Nmax, m, ell, s, eta, sigma=sigma, alpha=alpha, beta=beta, dtype=dtype, internal=internal)
-    return [scale * p for p in psi_basis]
+    psi_eta, psi_s = psi(Nmax, m, ell, s, eta, sigma=sigma, alpha=alpha, beta=beta, dtype=internal, internal=internal)
+    return ((1-ee**2)*psi_eta).astype(dtype), ((1-s**2)*psi_s).astype(dtype)
 
 
 def expand(basis, coeffs):
     """Expand the coefficient vector to grid space"""
-    f = np.zeros(np.shape(basis[0][0]), dtype=coeffs.dtype)
-    for ell in range(len(basis)):
-        for k in range(len(basis[ell])):
-            f += coeffs[ell,k] * basis[ell][k]
+    f = np.zeros((np.shape(basis[0][0])[0], np.shape(basis[0][1])[1]), dtype=coeffs.dtype)
+    for ell in range(np.shape(coeffs)[0]):
+        Peta, Ps = basis[ell]
+        f += Peta * (coeffs[ell,:].T @ Ps)
     return f
 
 
@@ -55,14 +52,12 @@ def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None,
         scale = 1
 
     Peta = Jacobi.polynomials(Lmax,alpha,alpha,eta,dtype=internal)
-    sm = (1+tt)**((m+sigma)/2)
-    onems = (1-tt)**(1/2)
+    onept = (1+tt)**((m+sigma)/2)
+    onemt = (1-tt)**(1/2)
     for ell in range(Lmax):
         Pell = Peta[ell,:][:,np.newaxis]
         Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-        spart = sm * onems**ell
-        for k in range(Nmax):
-            f += scale * ((coeffs[ell,k] * Pell) * (spart * Ps[k,:]))
+        f += scale * (Pell * (onept * onemt**ell * (coeffs[ell,:].T @ Ps)))
     return f.astype(dtype)
 
 
@@ -78,7 +73,7 @@ def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', color
     
     if fig is None or ax is None:
         fig, ax = plt.subplots(figsize=(4.25,6))
-    im = ax.pcolormesh(ss, y, f, cmap='RdBu')
+    im = ax.pcolormesh(ss, y, f, cmap='RdBu', shading='gouraud')
     if colorbar:
         fig.colorbar(im, ax=ax)
     ax.set_xlabel('s')

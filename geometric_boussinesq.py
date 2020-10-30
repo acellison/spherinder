@@ -478,7 +478,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
 
     # Convert to grid space
     if bases is not None:
-        result = [sph.expand(basis[field], coeffs[field].reshape((Lmax,Nmax))) for field in which]
+        result = [sph.expand(bases[field], coeffs[field].reshape((Lmax,Nmax))) for field in which]
     else:
         # Get domain properties
         m, Lmax, Nmax, s, eta, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['s'], domain['eta'], domain['boundary_method']
@@ -505,7 +505,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
 def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
 
-    fields = ['u']
+    fields = ['u','p']
     d = expand_evectors(Lmax, Nmax, evector, bases, domain, fields=fields, error_only=error_only)
     if error_only:
         return
@@ -541,7 +541,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     error_only = not plot_fields
     ns, neta = 1024, 1025
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    if Lmax*Nmax < 2400:  # About 6GB in basis storage for four fields at (ns,neta) = (256,255)
+#    if Lmax*Nmax < 2400:  # About 6GB in basis storage for four fields at (ns,neta) = (256,255)
+    if True:
         bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
     else:
         bases = None
@@ -628,15 +629,15 @@ def rotation_configs():
             ]
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = False
-    plot_fields = False
+    plot_fields = True
     boundary_method = 'galerkin'
 #    nev = 'all'
     nev = 10
 
-    config_index = -2
+    config_index = 8
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
