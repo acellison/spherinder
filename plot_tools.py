@@ -182,7 +182,7 @@ def plotequatorialslice(field, r, theta, phi, cmap=None):
         cmap = 'RdBu'
     cmap = copy.copy(plt.get_cmap(cmap))
     cmap.set_bad(color='grey', alpha=.5)
-    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
+    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap, shading='gouraud')
     plot_axes.plot((1 + eps / 2) * np.sin(phi), (1 + eps / 2) * np.cos(phi), color='k', linewidth=1)
     plot_axes.set_axis_off()
     plot_axes.axis([-1 - 2 * eps, 1 + 2 * eps, -1 - 2 * eps, 1 + 2 * eps])
@@ -226,7 +226,7 @@ def plotmeridionalslice(field, r, theta, phi, angle=0., stretch=False, cmap=None
         cmap = 'RdBu'
     cmap = copy.copy(plt.get_cmap(cmap))
     cmap.set_bad(color='grey', alpha=.5)
-    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap)
+    c_im = plot_axes.pcolormesh(x, y, plot_data, cmap=cmap, shading='gouraud')
 
     if stretch:
         lw = 1.5

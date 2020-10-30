@@ -193,6 +193,14 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
     save_data(filename, data)
 
 
+def make_tensor_coeffs(m, L_max, N_max, R_max, rank, dtype='float64'):
+    coeffs = []
+    for ell in range(m, L_max+1):
+        N = N_max+1 - ball128.N_min(ell-R_max)
+        coeffs.append(np.zeros((3**rank*N,1), dtype=dtype))
+    return coeffs
+
+
 def expand_field(field, m, L_max, N_max, R_max, z, cos_theta):
     """Expand a field.  For now only supports scalar fields"""
     a = 0      # Default offset for Jacobi polynomials
@@ -216,6 +224,7 @@ def expand_field(field, m, L_max, N_max, R_max, z, cos_theta):
 
 
 def plot_fields(fielddict, z, cos_theta):
+    shading = 'gouraud'  # 'gouraud' interpolates but is slower than 'nearest'
     r = np.sqrt((z+1)/2)
     r, cos_theta = r[np.newaxis,:], cos_theta[:,np.newaxis]
     sin_theta = np.sqrt(1-cos_theta**2)
@@ -223,11 +232,16 @@ def plot_fields(fielddict, z, cos_theta):
     for name, field in fielddict.items():
         fig, ax = plt.subplots(1,1,figsize=(4.25,6))
 
-        field = np.maximum(np.minimum(field,1),-1)
-
         cmap = copy.copy(plt.get_cmap('RdBu'))
         cmap.set_bad(color='grey', alpha=.5)
-        c_im = ax.pcolormesh(x, z, field, cmap=cmap, shading='auto')
+        if shading == 'gouraud':
+            # Shade via interpolation.  Can handle non-monotonic input grids
+            c_im = ax.pcolormesh(x, z, field, cmap=cmap, shading='gouraud')
+        else:
+            # Nearest shading requires a monotonic input grid
+            n = len(cos_theta)
+            _    = ax.pcolormesh(x[:n,:], z[:n,:], field[:n,:], cmap=cmap, shading='nearest')
+            c_im = ax.pcolormesh(x[n:,:], z[n:,:], field[n:,:], cmap=cmap, shading='nearest')
         cbar = fig.colorbar(c_im)
         eps = 0.02
         ax.plot((1+eps/2)*sin_theta, (1+eps/2)*cos_theta, color='k', linewidth=1)
@@ -237,14 +251,6 @@ def plot_fields(fielddict, z, cos_theta):
         ax.set_aspect('equal')
 
         fig.show()
-
-
-def make_tensor_coeffs(m, L_max, N_max, R_max, rank, dtype='float64'):
-    coeffs = []
-    for ell in range(m, L_max+1):
-        N = N_max+1 - ball128.N_min(ell-R_max)
-        coeffs.append(np.zeros((3**rank*N,1), dtype=dtype))
-    return coeffs
 
 
 def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
@@ -257,8 +263,10 @@ def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0),('T',0)], ntau=ntau, m_min=m, m_max=m)
 
     fielddict = {}
-    which = 'real' if np.max(np.abs(evector.real)) > np.max(np.abs(evector.imag)) else 'imag'
+    maxreal, maximag = np.max(np.abs(evector.real)), np.max(np.abs(evector.imag))
+    which = 'real' if maxreal > maximag else 'imag'
     print('Plotting {} part of eigenvector'.format(which))
+    print('  imag/real ratio: {}'.format(maximag/maxreal))
     evector = 2 * (evector.real if which=='real' else evector.imag)
 
     nr, ntheta = 1024, 1025
@@ -329,7 +337,7 @@ def rotation_configs():
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
             {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201},
             {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500},
-            {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1250, 'Nmax': 1100}
+            {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1200, 'Nmax': 1200}
             ]
 
 
