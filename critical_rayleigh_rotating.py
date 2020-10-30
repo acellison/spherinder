@@ -1,5 +1,6 @@
 import pickle, os, glob
 import copy, time
+import multiprocessing as mp
 
 import numpy as np
 import scipy.sparse as sparse
@@ -35,37 +36,43 @@ def build_ball(m, L_max, N_max):
     return B, domain
 
 
-def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundary_condition):
+def build_matrices_ell_fun(ell, B, Ekman, Prandtl, Rayleigh, alpha_BC, boundary_condition):
     def op(op_name,N,k,ell,a=B.a,dtype=np.float64):
         return ball128.operator(op_name,N,k,ell,a=a).astype(dtype)
 
-    M, L, E = [], [], []
-    for ell in ell_range:
-        N = B.N_max - ball128.N_min(ell-B.R_max)
-        M_ell, L_ell = boussinesq.matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC,implicit_buoyancy=True,implicit_base_temp=True,boundary_condition=boundary_condition)
-        M.append(M_ell.astype(np.complex128))
-        L.append(L_ell.astype(np.complex128))
+    N = B.N_max - ball128.N_min(ell-B.R_max)
+    M_ell, L_ell = boussinesq.matrices(B,N,ell,Ekman,Prandtl,Rayleigh,alpha_BC,implicit_buoyancy=True,implicit_base_temp=True,boundary_condition=boundary_condition)
 
-        # Conversion matrices for Coriolis
-        Em = op('E',N,1,ell-1).dot(op('E',N,0,ell-1))
-        E0 = op('E',N,1,ell  ).dot(op('E',N,0,ell  ))
-        Ep = op('E',N,1,ell+1).dot(op('E',N,0,ell+1))
-        Z = op('0',N,0,ell)
+    # Conversion matrices for Coriolis
+    Em = op('E',N,1,ell-1).dot(op('E',N,0,ell-1))
+    E0 = op('E',N,1,ell  ).dot(op('E',N,0,ell  ))
+    Ep = op('E',N,1,ell+1).dot(op('E',N,0,ell+1))
+    Z = op('0',N,0,ell)
 
-        # For ell = 0 set u = 0
-        if ell == 0:
-            E_ell = sparse.block_diag([Z, Z, Z, Z, Z])
-        else:
-            E_ell = sparse.block_diag([Em, E0, Ep, Z, Z])
+    # For ell = 0 set u = 0
+    if ell == 0:
+        E_ell = sparse.block_diag([Z, Z, Z, Z, Z])
+    else:
+        E_ell = sparse.block_diag([Em, E0, Ep, Z, Z])
 
-        # Append the tau rows and columns
-        ntau = 1 if ell == 0 else 4
-        nr, nc = np.shape(E_ell)
-        col = np.zeros((nr, ntau))
-        row = np.zeros((ntau, nc))
-        E_ell = sparse.bmat([[E_ell, col], [row, np.zeros((ntau, ntau))]])
+    # Append the tau rows and columns
+    ntau = 1 if ell == 0 else 4
+    nr, nc = np.shape(E_ell)
+    col = np.zeros((nr, ntau))
+    row = np.zeros((ntau, nc))
+    E_ell = sparse.bmat([[E_ell, col], [row, np.zeros((ntau, ntau))]])
 
-        E.append(E_ell.astype(np.complex128))
+    return M_ell.astype(np.complex128), L_ell.astype(np.complex128), E_ell.astype(np.complex128)
+
+
+def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundary_condition):
+    args = B, Ekman, Prandtl, Rayleigh, alpha_BC, boundary_condition
+    args = [(ell, *args) for ell in ell_range]
+
+    # Build matrices in parallel
+    pool = mp.Pool(mp.cpu_count())
+    result = pool.starmap(build_matrices_ell_fun, args)
+    M, L, E = zip(*result)
 
     return M, L, E
 
@@ -322,7 +329,7 @@ def rotation_configs():
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
             {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201},
             {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500},
-            {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1300, 'Nmax': 1100}
+            {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1250, 'Nmax': 1100}
             ]
 
 
