@@ -216,10 +216,11 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     ncoeff = Lmax*Nmax
     tau = vec[4*ncoeff:]
 
-    upbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=+1, alpha=1) for ell in range(Lmax)]
-    umbasis = [sph.psi(Nmax, m, ell, s, eta, sigma=-1, alpha=1) for ell in range(Lmax)]
-    uzbasis = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=1) for ell in range(Lmax)]
-    pbasis  = [sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=0) for ell in range(Lmax)]
+    galerkin = boundary_method == 'galerkin'
+    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1, galerkin=galerkin)
+    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1, galerkin=galerkin)
+    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1, galerkin=galerkin)
+    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=0, galerkin=False)
 
     # Get the grid space vector fields
     vec = vec.astype(np.complex128)
@@ -230,10 +231,10 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     pcoeff = vec[3*ncoeff:4*ncoeff]
 
     # Convert to grid space
-    up = sph.expand(upbasis, np.reshape(upcoeff, (Lmax,Nmax)))
-    um = sph.expand(umbasis, np.reshape(umcoeff, (Lmax,Nmax)))
-    uz = sph.expand(uzbasis, np.reshape(uzcoeff, (Lmax,Nmax)))
-    p  = sph.expand( pbasis, np.reshape( pcoeff, (Lmax,Nmax)))
+    up = upbasis.expand(np.reshape(upcoeff, (Lmax,Nmax)))
+    um = umbasis.expand(np.reshape(umcoeff, (Lmax,Nmax)))
+    uz = uzbasis.expand(np.reshape(uzcoeff, (Lmax,Nmax)))
+    p  =  pbasis.expand(np.reshape( pcoeff, (Lmax,Nmax)))
     u, v, w = np.sqrt(0.5)*(up + um), -1j*np.sqrt(0.5)*(up - um), uz
 
     ns, neta = len(s), len(eta)

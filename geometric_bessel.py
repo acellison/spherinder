@@ -200,8 +200,8 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
         Nmax = Nmax+1
         fcoeff = (Conv @ fcoeff.ravel()).reshape(Lmax, Nmax)
 
-    basis = [sph.psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, dtype=dtype) for ell in range(Lmax)]
-    f = sph.expand(basis, fcoeff)
+    basis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=0, galerkin=False, dtype=dtype)
+    f = basis.expand(fcoeff)
 
     return f, tau
 
@@ -311,7 +311,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
 
 def main():
-    solve = False
+    solve = True
     plot_evalues = True
     plot_fields = True
 

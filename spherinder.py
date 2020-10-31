@@ -7,58 +7,73 @@ from dedalus_sphere import operators
 from config import internal_dtype
 
 
-def psi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
-    """Orthogonal basis function"""
-    ns, neta = len(s), len(eta)
-    s = s.astype(internal)
-    t = 2*s**2 - 1
-    tscale = (1+t)**((m+sigma)/2) * (1-t)**(ell/2)
+class Basis():
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True):
+        self.s, self.eta = s, eta
+        self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
+        self.sigma, self.alpha, self.beta = sigma, alpha, beta
+        self.dtype, self.internal = dtype, internal
+        self.galerkin = galerkin
 
-    Peta = Jacobi.polynomials(ell+1,alpha,alpha,eta,dtype=internal)[-1,:][:,np.newaxis]
-    Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-    return Peta.astype(dtype), (tscale * Ps).astype(dtype)
-
-
-def phi(Nmax, m, ell, s, eta, sigma=0, alpha=0, beta=0, dtype='float64', internal='float128'):
-    """Galerkin basis function"""
-    ee = eta.astype(internal)[:,np.newaxis]
-    psi_eta, psi_s = psi(Nmax, m, ell, s, eta, sigma=sigma, alpha=alpha, beta=beta, dtype=internal, internal=internal)
-    return ((1-ee**2)*psi_eta).astype(dtype), ((1-s**2)*psi_s).astype(dtype)
+        if not lazy:
+            _construct_basis(self)
+        else:
+            self.sbasis, self.etabasis = None, None
+            self._constructed = False
 
 
-def expand(basis, coeffs):
-    """Expand the coefficient vector to grid space"""
-    f = np.zeros((np.shape(basis[0][0])[0], np.shape(basis[0][1])[1]), dtype=coeffs.dtype)
-    for ell in range(np.shape(coeffs)[0]):
-        Peta, Ps = basis[ell]
-        f += Peta * (coeffs[ell,:].T @ Ps)
-    return f
+    def _construct_basis(self):
+        m, Lmax, Nmax = self.m, self.Lmax, self.Nmax
+        sigma, alpha, beta = self.sigma, self.alpha, self.beta
+        dtype, internal = self.dtype, self.internal
+
+        s, eta = self.s.astype(internal), self.eta.astype(internal)
+        t = 2*s**2 - 1
+        if self.galerkin:
+            escale, sscale = 1-eta**2, 1-s**2
+        else:
+            escale, sscale = 1, 1
+
+        etabasis = (escale * Jacobi.polynomials(Lmax,alpha,alpha,eta,dtype=internal)).T
+        etabasis = etabasis.astype(dtype)
+
+        sbasis = []
+        onept = sscale * (1+t)**((m+sigma)/2)
+        onemt = (1-t)**(1/2)
+        for ell in range(Lmax):
+            Ps = (onept * onemt**ell) * Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
+            sbasis.append(Ps.astype(dtype))
+
+        self.sbasis, self.etabasis = sbasis, etabasis
+        self._constructed = True
 
 
-def expand_low_storage(coeffs, m, s, eta, sigma, alpha, beta=0, basis_kind=None, dtype='float64', internal='float64'):
-    """Expand the coefficient vector to grid space"""
-    Lmax, Nmax = np.shape(coeffs)
-    ns, neta = len(s), len(eta)
-    f = np.zeros((neta,ns), dtype=internal)
+    def expand(self, coeffs):
+        if not self._constructed:
+            self._construct_basis()
 
-    s, eta = s.astype(internal), eta.astype(internal)
-    t = 2*s**2 - 1
-    tt = t[np.newaxis,:]
-    if basis_kind in ['galerkin', 'phi']:
-        ss = s[np.newaxis,:]
-        ee = eta[:,np.newaxis]
-        scale = (1-ee**2) * (1-ss**2)
-    else:
-        scale = 1
 
-    Peta = Jacobi.polynomials(Lmax,alpha,alpha,eta,dtype=internal)
-    onept = (1+tt)**((m+sigma)/2)
-    onemt = (1-tt)**(1/2)
-    for ell in range(Lmax):
-        Pell = Peta[ell,:][:,np.newaxis]
-        Ps = Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-        f += scale * (Pell * (onept * onemt**ell * (coeffs[ell,:].T @ Ps)))
-    return f.astype(dtype)
+        if np.shape(coeffs) != (self.Lmax, self.Nmax):
+            raise ValueError('Inconsistent shape')
+
+        f = np.zeros((len(self.eta), len(self.s)), dtype=coeffs.dtype)
+        Peta = self.etabasis
+        for ell in range(self.Lmax):
+            Ps = self.sbasis[ell]
+            f += Peta[:,ell][:,np.newaxis] * (coeffs[ell,:] @ Ps)
+        return f
+
+
+    def __getitem__(self, index):
+        ell, k = index[0], index[1]
+        if ell >= self.Lmax:
+            raise ValueError('ell index out of range')
+        if k >= self.Nmax:
+            raise ValueError('k index out of range')
+
+        if not self._constructed:
+            self._construct_basis()
+        return self.etabasis[:,ell][:,np.newaxis] * self.sbasis[ell][k,:]
 
 
 def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):

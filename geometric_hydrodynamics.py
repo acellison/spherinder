@@ -221,16 +221,16 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy):
 
 def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     if boundary_method == 'galerkin':
-        basis_fun = sph.phi
+        galerkin = True
         dalpha = 1
     else:
-        basis_fun = sph.psi
+        galerkin = False
         dalpha = 0
 
-    upbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=+1, alpha=1+dalpha) for ell in range(Lmax)]
-    umbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=-1, alpha=1+dalpha) for ell in range(Lmax)]
-    uzbasis = [basis_fun(Nmax, m, ell, s, eta, sigma= 0, alpha=1+dalpha) for ell in range(Lmax)]
-    pbasis  = [  sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
+    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
+    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
+    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
+    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_p, galerkin=False)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis}
 
     return bases
@@ -248,10 +248,10 @@ def expand_evectors(Lmax, Nmax, vec, bases):
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
     # Convert to grid space
-    up = sph.expand(bases['up'], upcoeff.reshape((Lmax,Nmax)))
-    um = sph.expand(bases['um'], umcoeff.reshape((Lmax,Nmax)))
-    uz = sph.expand(bases['uz'], uzcoeff.reshape((Lmax,Nmax)))
-    p  = sph.expand(bases['p'],   pcoeff.reshape((Lmax,Nmax)))
+    up = bases['up'].expand(upcoeff.reshape((Lmax,Nmax)))
+    um = bases['um'].expand(umcoeff.reshape((Lmax,Nmax)))
+    uz = bases['uz'].expand(uzcoeff.reshape((Lmax,Nmax)))
+    p  = bases['p'].expand(pcoeff.reshape((Lmax,Nmax)))
     u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
     return u, v, w, p, tau

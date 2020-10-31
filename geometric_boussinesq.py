@@ -435,17 +435,17 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
 
 def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     if boundary_method == 'galerkin':
-        basis_fun = sph.phi
+        galerkin = True
         dalpha = 1
     else:
-        basis_fun = sph.psi
+        galerkin = False
         dalpha = 0
 
-    upbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=+1, alpha=1+dalpha) for ell in range(Lmax)]
-    umbasis = [basis_fun(Nmax, m, ell, s, eta, sigma=-1, alpha=1+dalpha) for ell in range(Lmax)]
-    uzbasis = [basis_fun(Nmax, m, ell, s, eta, sigma= 0, alpha=1+dalpha) for ell in range(Lmax)]
-    pbasis  = [  sph.psi(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_p) for ell in range(Lmax)]
-    Tbasis  = [basis_fun(Nmax, m, ell, s, eta, sigma= 0, alpha=g_alpha_T+dalpha) for ell in range(Lmax)]
+    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
+    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
+    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
+    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_p, galerkin=False)
+    Tbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_T+dalpha, galerkin=galerkin)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis, 'T':Tbasis}
 
     return bases
@@ -478,7 +478,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
 
     # Convert to grid space
     if bases is not None:
-        result = [sph.expand(bases[field], coeffs[field].reshape((Lmax,Nmax))) for field in which]
+        result = [bases[field].expand(coeffs[field].reshape((Lmax,Nmax))) for field in which]
     else:
         # Get domain properties
         m, Lmax, Nmax, s, eta, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['s'], domain['eta'], domain['boundary_method']
@@ -622,7 +622,7 @@ def rotation_configs():
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 180},
-            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 100, 'Nmax': 100},
+            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 200, 'Nmax': 200},
             {'Ekman': 10**-9, 'm': 300, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
             {'Ekman': 10**-10, 'm': 646, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
             {'Ekman': 10**-11, 'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
