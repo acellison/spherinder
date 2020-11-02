@@ -70,7 +70,7 @@ def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundar
     args = [(ell, *args) for ell in ell_range]
 
     # Build matrices in parallel
-    num_process = min(mp.cpu_count(), 32)
+    num_processes = min(mp.cpu_count(), 32)
     pool = mp.Pool(num_processes)
     result = pool.starmap(build_matrices_ell_fun, args)
     M, L, E = zip(*result)
