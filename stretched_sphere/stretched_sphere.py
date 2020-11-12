@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from dedalus_sphere import jacobi as Jacobi
 from dedalus_sphere import zernike as Zernike
 from kronecker import Kronecker
-from eigtools import eigsort
+from spherinder.eigtools import eigsort
 import os
 import pickle
 

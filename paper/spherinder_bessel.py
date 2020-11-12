@@ -6,10 +6,15 @@ import os
 import pickle
 
 from dedalus_sphere import jacobi as Jacobi
-from eigtools import eigsort
-import config
+
+from spherinder import config
 config.internal_dtype = 'float64'
+
 import spherinder as sph
+from spherinder.eigtools import eigsort
+
+
+g_file_prefix = 'spherinder_bessel'
 
 
 def dispersion_zeros(ell,n,a=0,guess=None,imax=20,nk=10,eps=0.1):
@@ -153,7 +158,7 @@ def savefig(filename):
 
 def filename_prefix(directory='data'):
     basepath = os.path.join(os.path.dirname(__file__), directory)
-    prefix = 'geometric_bessel'
+    prefix = g_file_prefix
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 

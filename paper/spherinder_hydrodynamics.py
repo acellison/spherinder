@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
-from eigtools import eigsort, plot_spectrum
 import spherinder as sph
+from spherinder.eigtools import eigsort, plot_spectrum
+
 
 g_alpha_p = 2
-g_file_prefix = 'geometric_hydrodynamics'
+g_file_prefix = 'spherinder_hydrodynamics'
 
 
 def matrices_galerkin(m, Lmax, Nmax, Ekman):
@@ -53,20 +54,20 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0, truncate=True)
     
     # Time derivative matrices
-    M00 = Ekman * Cp @ Boundp
-    M11 = Ekman * Cm @ Boundm
-    M22 = Ekman * Cz @ Boundz
+    M00 = Cp @ Boundp
+    M11 = Cm @ Boundm
+    M22 = Cz @ Boundz
     M33 = sparse.lil_matrix((ncoeff,ncoeff0))
 
     # i*u+ equation - spin+ velocity component
-    L00 = (-1j * Cp + Ekman * Lapp) @ Boundp
+    L00 = (-2j * Cp + Ekman * Lapp) @ Boundp
     L01 = sparse.lil_matrix((ncoeff,ncoeff0))
     L02 = sparse.lil_matrix((ncoeff,ncoeff0))
     L03 = -Gradp
 
     # i*u- equation - spin- velocity component
     L10 = sparse.lil_matrix((ncoeff,ncoeff0))
-    L11 = (1j * Cm + Ekman * Lapm) @ Boundm
+    L11 = (2j * Cm + Ekman * Lapm) @ Boundm
     L12 = sparse.lil_matrix((ncoeff,ncoeff0))
     L13 = -Gradm
 
@@ -308,14 +309,14 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
-    m, Ekman = 14, 1e-5
-    Lmax, Nmax = 30, 30
+    m, Ekman = 30, 1e-6
+    Lmax, Nmax = 52, 52
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))

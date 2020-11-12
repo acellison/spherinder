@@ -6,11 +6,16 @@ import os
 import pickle
 
 import greenspan_inertial_waves as greenspan
-from eigtools import eigsort
 
-import config
-config.internal_dtype = 'float64'
+internal_dtype = 'float64'
+from spherinder import config
+config.internal_dtype = internal_dtype
+
 import spherinder as sph
+from spherinder.eigtools import eigsort
+
+
+g_file_prefix = 'spherinder_inertial_waves'
 
 
 def matrices(m, Lmax, Nmax, boundary_method):
@@ -63,10 +68,10 @@ def matrices(m, Lmax, Nmax, boundary_method):
     Divz = Div[:,2*ncoeff:]
 
     # Boundary condition
-    Rad = sph.operator('erdot')(m, Lmax, Nmax, alpha=1)
-    Boundary = sph.operator('boundary')(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
+    Rad = sph.operator('erdot', dtype='float128')(m, Lmax, Nmax, alpha=1)
+    Boundary = sph.operator('boundary', dtype='float128', internal='float128')(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
     Bound = Boundary @ Rad
-    Bound = sph.remove_zero_rows(Bound)
+    Bound = sph.remove_zero_rows(Bound).astype('float64')
 
     # Tau conversion
     # Time derivative matrices
@@ -175,7 +180,7 @@ def savefig(filename):
 
 def filename_prefix(directory='data'):
     basepath = os.path.join(os.path.dirname(__file__), directory)
-    prefix = 'geometric_inertial_waves'
+    prefix = g_file_prefix
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
@@ -247,8 +252,7 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
 def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     save_plots = False
     plot_field_indices = [3]
-#    plot_field_indices = list(range(4))
-    n, ell = 150, 6
+    n, ell = 50, 2
     mode_index = (n,(n-m)//2+ell,m)
 
     # Load the data
@@ -305,7 +309,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     print('Plotting eigenvector with eigenvalue {:1.4f}'.format(val))
 
     # Construct the basis polynomials
-    ns, neta = 256, 255
+    ns, neta = 256, 257
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     u, v, w, p, tau, ur = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
 
@@ -329,14 +333,30 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         filename = prefix + '-evector-' + configstr + '-' + modestr + '-' + field_names[field_index] + '.png'
         save(filename)
 
+    s, eta = s[np.newaxis,:], eta[:,np.newaxis]
+    z = eta * np.sqrt(1 - s**2)
+    k = mode_index[1]
+    panalytic = greenspan.compute_eigenmode(s, z, n, k, m)
+
+    p /= np.max(abs(p))
+    if np.max(abs(panalytic-p)) > np.max(abs(panalytic+p)):
+        p *= -1
+
+    sph.plotfield(s.ravel(), eta.ravel(), panalytic)
+    plt.title('analytic mode')
+
+    error = panalytic - p.real
+    sph.plotfield(s.ravel(), eta.ravel(), error)
+    plt.title('error')
+
 
 def main():
     solve = True
     plot_evalues = True
     plot_fields = True
 
-    m = 95
-    Lmax, Nmax = 16, 24
+    m = 30
+    Lmax, Nmax = 24, 24
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))

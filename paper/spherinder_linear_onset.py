@@ -5,12 +5,13 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
-from eigtools import eigsort, scipy_sparse_eigs, plot_spectrum, discard_spurious_eigenvalues
 import spherinder as sph
+from spherinder.eigtools import eigsort, scipy_sparse_eigs, plot_spectrum, discard_spurious_eigenvalues
+
 
 g_alpha_p = 2
 g_alpha_T = 0
-g_file_prefix = 'geometric_linear_onset'
+g_file_prefix = 'spherinder_linear_onset'
 
 
 def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):

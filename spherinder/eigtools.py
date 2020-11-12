@@ -1,5 +1,4 @@
-import time
-import datetime
+import time, datetime
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.linalg import eig

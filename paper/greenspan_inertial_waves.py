@@ -20,7 +20,7 @@ def compute_eigenvalues(n, m, dtype='float128', days=3):
     return z
 
 
-def compute_eigenmode(r, z, n, k, m):
+def compute_eigenmode(s, z, n, k, m):
     """Compute the eigenmode of the inertial waves problem for a given
        degree n and azimuthal wavenumber m with index k"""
 
@@ -38,10 +38,10 @@ def compute_eigenmode(r, z, n, k, m):
     # Construct the solution
     c = (1-lam**2)**(-1/2)
     enm = (n-m) % 2
-    result = (lam*z)**enm * (r/c)**m
+    result = (lam*z)**enm * (s/c)**m
     for j in range(len(etaj)):
         eta2 = etaj[j]**2
-        result *= (eta2*(1-lam**2)*r**2 + lam**2*(1-eta2)*z**2 + eta2*(eta2-1))
+        result *= (eta2*(1-lam**2)*s**2 + lam**2*(1-eta2)*z**2 + eta2*(eta2-1))
   
     result /= np.max(np.abs(result))
     return result
