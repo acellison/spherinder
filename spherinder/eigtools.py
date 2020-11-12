@@ -63,9 +63,23 @@ def add_custom_solvers():
         def solve(self, vector):
             return self.LU(vector)
 
+    @de.matsolvers.add_solver
+    class SuperluTransposed(SparseSolver):
+        """Super LU factorized transposed solve."""
+
+        def __init__(self, matrix, solver=None):
+            LU = spla.splu(matrix.T)
+            self.L, self.U, self.perm_r, self.perm_c = LU.U.T, LU.L.T, LU.perm_r, LU.perm_c
+
+        def solve(self, b):
+            y = spla.spsolve_triangular(self.L, b[self.perm_c], lower=True,  unit_diagonal=False)
+            x = spla.spsolve_triangular(self.U, y,              lower=False, unit_diagonal=True)
+            return x[self.perm_r]
+
+
     # Make it addressable via string
     global matsolvers
-    matsolvers += ['LSQR_solve', 'UmfpackSpsolve64', 'UmfpackFactorized64']
+    matsolvers += ['LSQR_solve', 'UmfpackSpsolve64', 'UmfpackFactorized64', 'SuperluTransposed']
 
 
 def make_solver(matsolver):
