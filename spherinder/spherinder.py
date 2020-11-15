@@ -120,28 +120,45 @@ def resize(mat, Lin, Nin, Lout, Nout):
     if not isinstance(mat, sparse.csr_matrix):
         mat = mat.tocsr()
     rows, cols = mat.nonzero()
-    oprows, opcols, opdata = [], [], []
 
+    # If we have the zero matrix just return a zero matrix
+    if len(rows) == 0:
+        return sparse.lil_matrix((nouttotal, ncols))
+
+    oprows, opcols, opdata = [], [], []
     L = min(Lin,Lout)
-    inoffset, outoffset = 0, 0
-    dn = 0
+    inoffset, dn = 0, 0
     for ell in range(L):
         nin, nout = Nin(ell), Nout(ell)
         n = min(nin,nout)
 
         indices = np.where(np.logical_and(inoffset <= rows, rows < inoffset+n))
-        r, c = rows[indices], cols[indices]
-        oprows += (r+dn).tolist()
-        opcols += c.tolist()
-        opdata += np.asarray(mat[r,c]).ravel().tolist()
+        if len(indices[0]) != 0:
+            r, c = rows[indices], cols[indices]
+            oprows += (r+dn).tolist()
+            opcols += c.tolist()
+            opdata += np.asarray(mat[r,c]).ravel().tolist()
 
         dn += nout-nin
         inoffset += nin
-        outoffset += nout
 
     result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
 
     return result
+
+
+def triangular_truncate(mat, Lmax, Nmax):
+    if Nmax <= Lmax:
+        raise ValueError('Radial degree too small for triangular truncation')
+    Nout = lambda ell: Nmax-ell
+
+    # truncate columns
+    mat = resize(mat.T, Lmax, Nmax, Lmax, Nout).T
+
+    # truncate rows
+    mat = resize(mat, Lmax, Nmax, Lmax, Nout)
+
+    return mat
 
 
 def remove_zero_rows(mat):

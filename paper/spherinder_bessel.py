@@ -12,7 +12,7 @@ config.internal_dtype = 'float64'
 
 import spherinder as sph
 from spherinder.eigtools import eigsort
-
+from fileio import save_data, save_figure
 
 g_file_prefix = 'spherinder_bessel'
 
@@ -139,23 +139,6 @@ def matrices(m, Lmax, Nmax, boundary_method):
         raise ValueError('Unsupported boundary method')
 
 
-def checkdir(filename):
-    filename = os.path.abspath(filename)
-    path = os.path.dirname(filename)
-    if not os.path.exists(path):
-        os.mkdir(path)
-
-def savedata(filename, data):
-    checkdir(filename)
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-
-
-def savefig(filename):
-    checkdir(filename)
-    plt.savefig(filename)
-    
-
 def filename_prefix(directory='data'):
     basepath = os.path.join(os.path.dirname(__file__), directory)
     prefix = g_file_prefix
@@ -186,7 +169,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
             'boundary_method': boundary_method,
             'evalues': evalues, 'evectors': evectors}
     filename = pickle_filename(m, Lmax, Nmax, boundary_method)
-    savedata(filename, data)
+    save_data(filename, data)
 
 
 def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
@@ -243,9 +226,9 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     evalues = evalues[np.isfinite(evalues)]
 
     if save_plots:
-        def save(fn): savefig(fn)
+        def save(fn, fig): save_figure(fn, fig)
     else:
-        def save(_): pass
+        def save(fn, fig): pass
 
     if m == 10:
         evalue_target = 49.14**2
@@ -276,7 +259,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         fig.set_tight_layout(True)
 
         filename = prefix + '-evalues-' + configstr + '.png'
-        save(filename)
+        save(filename, fig)
 
     if not plot_fields:
         return
@@ -312,7 +295,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         ax.set_ylabel('f')
         ax.set_title(r'${}$'.format(field_names[field_index]))
         filename = prefix + '-evector-' + configstr + '-' + '-' + field_names[field_index] + '.png'
-        save(filename)
+        save(filename, fig)
 
 
 def main():

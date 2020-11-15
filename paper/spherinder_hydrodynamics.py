@@ -7,6 +7,7 @@ import pickle
 
 import spherinder as sph
 from spherinder.eigtools import eigsort, plot_spectrum
+from fileio import save_data, save_figure
 
 
 g_alpha_p = 2
@@ -155,23 +156,6 @@ def invert_permutation(permutation):
     inv[permutation] = np.arange(len(inv), dtype=inv.dtype)
     return inv
 
-
-def checkdir(filename):
-    path = os.path.dirname(os.path.abspath(filename))
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-
-def save_data(filename, data):
-    checkdir(filename)
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-
-
-def save_figure(filename, fig):
-    checkdir(filename)
-    fig.savefig(filename)
-    
 
 def make_filename_prefix(directory='data'):
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))

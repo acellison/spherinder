@@ -7,15 +7,18 @@ import pickle
 
 import greenspan_inertial_waves as greenspan
 
-internal_dtype = 'float64'
+internal_dtype = 'float128'
 from spherinder import config
 config.internal_dtype = internal_dtype
 
-import spherinder as sph
+import spherinder.spherinder as sph
 from spherinder.eigtools import eigsort
+from fileio import save_data, save_figure
 
 
 g_file_prefix = 'spherinder_inertial_waves'
+
+triangular_truncation = False
 
 
 def matrices(m, Lmax, Nmax, boundary_method):
@@ -32,8 +35,8 @@ def matrices(m, Lmax, Nmax, boundary_method):
     """
     alpha_bc_p = 0    # tau polynomial basis in u(+) equation, no greater than 1
     alpha_bc_z = 0    # tau polynomial basis in u(z) equation, no greater than 1
-    alpha_bc_div = 1  # tau polynomial basis in div equation, no greater than 2
-    beta_bc_p = 1     # tau polynomial basis shift, no greater than 1
+    alpha_bc_div = 0  # tau polynomial basis in div equation, no greater than 2
+    beta_bc_p = 0     # tau polynomial basis shift, no greater than 1
     beta_bc_z = 0     # tau polynomial basis shift, no greater than 1
     beta_bc_div = 0   # tau polynomial basis shift, no greater than 2
 
@@ -110,6 +113,13 @@ def matrices(m, Lmax, Nmax, boundary_method):
     uzmats = [L20, L21, L22, L23]
     pmats = [L30, L31, L32, L33]
 
+    if triangular_truncation:
+        Mmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in Mmats]
+        upmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in upmats]
+        ummats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in ummats]
+        uzmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in uzmats]
+        pmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in pmats]
+
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
     L = sparse.bmat([upmats, ummats, uzmats, pmats], format=sparse_format)
@@ -150,6 +160,12 @@ def matrices(m, Lmax, Nmax, boundary_method):
 
     # Create the boundary condition rows and tau columns
     row, col = impenetrable()
+    if triangular_truncation:
+        Nout = lambda ell: Nmax-ell
+        row, col = row.tocsr(), col.tocsr()
+        row = sparse.hstack([sph.resize(row[:,i*ncoeff:(i+1)*ncoeff].T, Lmax, Nmax, Lmax, Nout).T for i in range(4)])
+        col = sparse.vstack([sph.resize(col[i*ncoeff:(i+1)*ncoeff,:],   Lmax, Nmax, Lmax, Nout) for i in range(4)])
+
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[  L, col],
                      [row, corner]], format='csr')
@@ -160,23 +176,6 @@ def matrices(m, Lmax, Nmax, boundary_method):
     M, L = M.tocsr(), L.tocsr()
     return M, L
 
-
-def checkdir(filename):
-    filename = os.path.abspath(filename)
-    path = os.path.dirname(filename)
-    if not os.path.exists(path):
-        os.mkdir(path)
-
-def savedata(filename, data):
-    checkdir(filename)
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-
-
-def savefig(filename):
-    checkdir(filename)
-    plt.savefig(filename)
-    
 
 def filename_prefix(directory='data'):
     basepath = os.path.join(os.path.dirname(__file__), directory)
@@ -200,7 +199,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
         plot_axes[0].set_title('L')
         plot_axes[1].set_title('M')
         filename = filename_prefix('figures') + f'-m={m}-Lmax={Lmax}-Nmax={Nmax}-spy.png'
-        savefig(filename)
+        save_figure(filename, fig)
         plt.show()
 
     # Compute the eigenvalues and eigenvectors
@@ -212,13 +211,17 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
             'boundary_method': boundary_method,
             'evalues': evalues, 'evectors': evectors}
     filename = pickle_filename(m, Lmax, Nmax, boundary_method)
-    savedata(filename, data)
+    save_data(filename, data)
 
 
 def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     z = 2*s**2 - 1
 
-    ncoeff = Lmax*Nmax
+    if triangular_truncation:
+        Nout = lambda ell: Nmax-ell
+        ncoeff = np.sum([Nout(ell) for ell in range(Lmax)])
+    else:
+        ncoeff = Lmax*Nmax
     tau = vec[4*ncoeff:]
 
     galerkin = boundary_method == 'galerkin'
@@ -236,10 +239,25 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     pcoeff = vec[3*ncoeff:4*ncoeff]
 
     # Convert to grid space
-    up = upbasis.expand(np.reshape(upcoeff, (Lmax,Nmax)))
-    um = umbasis.expand(np.reshape(umcoeff, (Lmax,Nmax)))
-    uz = uzbasis.expand(np.reshape(uzcoeff, (Lmax,Nmax)))
-    p  =  pbasis.expand(np.reshape( pcoeff, (Lmax,Nmax)))
+    if triangular_truncation:
+        bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis}
+        coeff = {'up':upcoeff, 'um':umcoeff, 'uz':uzcoeff, 'p':pcoeff}
+        griddata = {}
+        for field, coeffs in coeff.items():
+            data = np.zeros(Lmax*Nmax, dtype=vec.dtype)
+            offset = 0
+            for ell in range(Lmax):
+                n = Nout(ell)
+                data[ell*Nmax:ell*Nmax+n] = coeffs[offset:offset+n]
+                offset += n
+            basis = bases[field]
+            griddata[field] = basis.expand(np.reshape(data, (Lmax,Nmax)))
+        up, um, uz, p = griddata['up'], griddata['um'], griddata['uz'], griddata['p']
+    else:
+        up = upbasis.expand(np.reshape(upcoeff, (Lmax,Nmax)))
+        um = umbasis.expand(np.reshape(umcoeff, (Lmax,Nmax)))
+        uz = uzbasis.expand(np.reshape(uzcoeff, (Lmax,Nmax)))
+        p  =  pbasis.expand(np.reshape( pcoeff, (Lmax,Nmax)))
     u, v, w = np.sqrt(0.5)*(up + um), -1j*np.sqrt(0.5)*(up - um), uz
 
     ns, neta = len(s), len(eta)
@@ -251,9 +269,9 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
 
 def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     save_plots = False
-    plot_field_indices = [3]
-    n, ell = 50, 2
-    mode_index = (n,(n-m)//2+ell,m)
+    n = m+61
+    num_modes = 6
+    modes = list(zip([n]*num_modes, range(num_modes)))
 
     # Load the data
     filename = pickle_filename(m, Lmax, Nmax, boundary_method)
@@ -263,12 +281,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     evalues, evectors = data['evalues'], data['evectors']
 
     if save_plots:
-        def save(fn): savefig(fn)
+        def save(fn, fig): save_figure(fn, fig)
     else:
-        def save(_): pass
+        def save(fn, fig): pass
 
-    evalue_target = 2*greenspan.compute_eigenvalues(mode_index[0], mode_index[2])[mode_index[1]-1]
-    modestr = str(mode_index[0]) + str(mode_index[1]) + str(mode_index[2])
     configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
     prefix = filename_prefix('figures')
 
@@ -293,61 +309,70 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         plt.xlim([-2.1,2.1])
         ax.set_xlabel('Real(λ)')
         ax.set_ylabel('Imag(λ)')
-        ax.set_title('Inertial Wave Eigenvalues in the Stretched Sphere')
+        ax.set_title(f'Inertial Wave Eigenvalues, $m$ = {m}')
         fig.set_tight_layout(True)
 
         filename = prefix + '-evalues-' + configstr + '.png'
-        save(filename)
+        save(filename, fig)
 
     if not plot_fields:
         return
 
     # Get the target eigenpair
-    index = np.argmin(abs(evalues - evalue_target))
-    val, vec = evalues[index], evectors[:,index]
-
-    print('Plotting eigenvector with eigenvalue {:1.4f}'.format(val))
-
-    # Construct the basis polynomials
     ns, neta = 256, 257
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    u, v, w, p, tau, ur = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
-
-    # Spherical radial velocity component
-    error_top = np.max(np.abs(ur[-1,:]))
-    error_bot = np.max(np.abs(ur[ 0,:]))
-    print('Top    boundary error: {:1.3e}'.format(error_top))
-    print('Bottom boundary error: {:1.3e}'.format(error_bot))
-
-    fields = [u,v,w,p,ur]
-    field_names = ['u','v','w','p','u_r']
-
-    for i in range(len(plot_field_indices)):
-        field_index = plot_field_indices[i]
-        Fgrid = fields[field_index]
+    fig, ax = plt.subplots(1,len(modes),figsize=(3*num_modes,5))
+    for i, (n, ell) in enumerate(modes):
+        # Compute the analytic eigenfrequency
+        mode_index = (n,(n-m)//2-ell,m)
+        evalue_target = 2*greenspan.compute_eigenvalues(mode_index[0], mode_index[2])[mode_index[1]-1]
+        index = np.argmin(abs(evalues - evalue_target))
+        evalue, evector = evalues[index], evectors[:,index]
+    
+        print('Plotting eigenvector with eigenvalue {:1.4f}'.format(evalue))
+        u, v, w, p, tau, ur = expand_evectors(m, Lmax, Nmax, boundary_method, evector, s, eta)
+   
+        # Plot the pressure field
+        Fgrid = p
         relative_real = np.linalg.norm(np.real(Fgrid))/np.linalg.norm(Fgrid)
         f = Fgrid.real if relative_real > 0.5 else Fgrid.imag
+        sph.plotfield(s, eta, f, colorbar=False, fig=fig, ax=ax[i])
+        ax[i].set_title(f'$\lambda = ${evalue_target:.4f}')
+            
+        # Compute the analytic pressure mode
+        ss, ee = s[np.newaxis,:], eta[:,np.newaxis]
+        zz = ee * np.sqrt(1 - ss**2)
+        k = mode_index[1]
+        panalytic = greenspan.compute_eigenmode(ss, zz, n, k, m)
 
-        sph.plotfield(s, eta, f)
-        plt.title(r'${}$'.format(field_names[field_index]))
-        filename = prefix + '-evector-' + configstr + '-' + modestr + '-' + field_names[field_index] + '.png'
-        save(filename)
+        p /= np.max(abs(p))
+        if np.max(abs(panalytic-p)) > np.max(abs(panalytic+p)):
+            p *= -1
+    
+        # Compute the analytic eigenfrequency
+        error_evalue = evalue_target - evalue
+        print('    Eigenvalue error: ', error_evalue)
 
-    s, eta = s[np.newaxis,:], eta[:,np.newaxis]
-    z = eta * np.sqrt(1 - s**2)
-    k = mode_index[1]
-    panalytic = greenspan.compute_eigenmode(s, z, n, k, m)
+        error = panalytic - p.real
+        print('    Eigenfunction error: ',np.max(abs(error)))
 
-    p /= np.max(abs(p))
-    if np.max(abs(panalytic-p)) > np.max(abs(panalytic+p)):
-        p *= -1
+        # Spherical radial velocity component
+        bc_error_top = np.max(np.abs(ur[-1,:]))
+        bc_error_bot = np.max(np.abs(ur[ 0,:]))
+        print('    Top    boundary error: {:1.3e}'.format(bc_error_top))
+        print('    Bottom boundary error: {:1.3e}'.format(bc_error_bot))
 
-    sph.plotfield(s.ravel(), eta.ravel(), panalytic)
-    plt.title('analytic mode')
+        # Error plot
+        plot_error = False
+        if plot_error:
+            sph.plotfield(s.ravel(), eta.ravel(), panalytic, colorbar=False)
+            plt.title('analytic mode')
+        
+            sph.plotfield(s.ravel(), eta.ravel(), error)
+            plt.title('error')
 
-    error = panalytic - p.real
-    sph.plotfield(s.ravel(), eta.ravel(), error)
-    plt.title('error')
+    filename = prefix + '-evectors-' + configstr + f'-n={n}-p.png'
+    save(filename, fig)
 
 
 def main():
@@ -355,8 +380,8 @@ def main():
     plot_evalues = True
     plot_fields = True
 
-    m = 30
-    Lmax, Nmax = 24, 24
+    m = 139
+    Lmax, Nmax = 30, 42
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))
