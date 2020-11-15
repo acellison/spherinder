@@ -1,19 +1,21 @@
 from dedalus_sphere import ball_wrapper as ball
-from dedalus_sphere import ball128
+from dedalus_sphere import ball128, sphere128
 import dedalus.public as de
-from dedalus.core.distributor import Distributor
 
 import os
 import pickle
-from mpi4py import MPI
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sparse
 
 import boussinesq
 from state_vector import StateVector
-from eigtools import eigsort, plot_spectrum
 from plot_tools import dealias, plotmeridionalslice
+
+from utilities import build_ball, make_tensor_coeffs, expand_field, plot_fields
+from utilities import save_data, save_figure
+
+from spherinder.eigtools import eigsort, plot_spectrum
 
 
 g_file_prefix = 'damped_inertial_waves'
@@ -27,55 +29,29 @@ else:
         return 0 if ell == 0 else 3
 
 
-def build_ball(L_max, N_max):
-    R_max = 3
-    L_dealias = 1
-    N_dealias = 1
-    N_r = N_max
-
-    # Find MPI rank
-    comm = MPI.COMM_WORLD
-
-    # Make domain
-    mesh=[1]
-    phi_basis = de.Fourier('phi',2*(L_max+1), interval=(0,2*np.pi),dealias=L_dealias)
-    theta_basis = de.Fourier('theta', L_max+1, interval=(0,np.pi),dealias=L_dealias)
-    r_basis = de.Fourier('r', N_max+1, interval=(0,1),dealias=N_dealias)
-    domain = de.Domain([phi_basis,theta_basis,r_basis], grid_dtype=np.float64, mesh=mesh)
-
-    domain.global_coeff_shape = np.array([L_max+1,L_max+1,N_max+1])
-    domain.distributor = Distributor(domain,comm,mesh)
-
-    th_m_layout  = domain.distributor.layouts[2]
-    r_ell_layout = domain.distributor.layouts[1]
-
-    m_start   = th_m_layout.slices(scales=1)[0].start
-    m_end     = th_m_layout.slices(scales=1)[0].stop-1
-    ell_start = r_ell_layout.slices(scales=1)[1].start
-    ell_end   = r_ell_layout.slices(scales=1)[1].stop-1
-
-    # set up ball
-    N_theta = int((L_max+1)*L_dealias)
-    N_r     = int((N_r+1)*N_dealias)
-    B = ball.Ball(N_max,L_max,N_theta=N_theta,N_r=N_r,R_max=R_max,ell_min=ell_start,ell_max=ell_end,m_min=m_start,m_max=m_end,a=0.)
-
-    return B, domain
-
-
 def ell_matrices(B, N, ell, Ekman, alpha_BC, bc_type):
     """Construct grad.phi and boundary conditions for the inertial waves problem"""
+    def op(op_name,N,k,ell,a=B.a,dtype=np.float64):
+        return ball128.operator(op_name,N,k,ell,a=a).astype(dtype)
+
+    def xi(mu,ell):
+        # returns xi for ell > 0 or ell = 0 and mu = +1
+        # otherwise returns 0.
+        if (ell > 0) or (ell == 0 and mu == 1):
+            return ball128.xi(mu,ell)
+        return 0.
 
     def D(mu, i, deg):
-        if mu == +1: return B.op('D+', N, i, ell + deg)
-        if mu == -1: return B.op('D-', N, i, ell + deg)
+        if mu == +1: return op('D+', N, i, ell + deg)
+        if mu == -1: return op('D-', N, i, ell + deg)
 
     def E(i, deg):
-        return B.op('E', N, i, ell + deg)
+        return op('E', N, i, ell + deg)
 
     def C(deg): return ball128.connection(N,ell+deg,alpha_BC,2)
 
-    I = B.op('I', N, 0, ell).tocsr()
-    Z = B.op('0',N,0,ell)
+    I = op('I', N, 0, ell).tocsr()
+    Z = op('0',N,0,ell)
 
     N0 = N
     N1 = N + N0 + 1
@@ -94,7 +70,7 @@ def ell_matrices(B, N, ell, Ekman, alpha_BC, bc_type):
                          [Z,Z,Z,I]]).tocsr()
         return M, L, L
 
-    xim, xip = B.xi([-1,+1],ell)
+    xim, xip = xi([-1,+1],ell)
 
     M00 = E(1,-1).dot(E(0,-1))
     M11 = E(1, 0).dot(E(0, 0))
@@ -127,30 +103,30 @@ def ell_matrices(B, N, ell, Ekman, alpha_BC, bc_type):
         return M, L, Q
 
     if bc_type == 'stress-free':
-        Q = B.Q[(ell,2)]
-        if ell == 1: rDmm = 0.*B.op('r=1',N,1,ell)
-        else: rDmm = B.xi(-1,ell-1)*B.op('r=1',N,1,ell-2)*D(-1,0,-1)
-        rDpm = B.xi(+1,ell-1)*B.op('r=1',N,1,ell  )*D(+1,0,-1)
-        rDm0 = B.xi(-1,ell  )*B.op('r=1',N,1,ell-1)*D(-1,0, 0)
-        rDp0 = B.xi(+1,ell  )*B.op('r=1',N,1,ell+1)*D(+1,0, 0)
-        rDmp = B.xi(-1,ell+1)*B.op('r=1',N,1,ell  )*D(-1,0,+1)
-        rDpp = B.xi(+1,ell+1)*B.op('r=1',N,1,ell+2)*D(+1,0,+1)
+        Q = boussinesq.make_Q([ell],2)
+        if ell == 1: rDmm = 0.*op('r=1',N,1,ell)
+        else: rDmm = xi(-1,ell-1)*op('r=1',N,1,ell-2)*D(-1,0,-1)
+        rDpm = xi(+1,ell-1)*op('r=1',N,1,ell  )*D(+1,0,-1)
+        rDm0 = xi(-1,ell  )*op('r=1',N,1,ell-1)*D(-1,0, 0)
+        rDp0 = xi(+1,ell  )*op('r=1',N,1,ell+1)*D(+1,0, 0)
+        rDmp = xi(-1,ell+1)*op('r=1',N,1,ell  )*D(-1,0,+1)
+        rDpp = xi(+1,ell+1)*op('r=1',N,1,ell+2)*D(+1,0,+1)
 
         rD = np.array([rDmm, rDm0, rDmp, 0.*rDmm, 0.*rDm0, 0.*rDmp, rDpm, rDp0, rDpp])
         QSm = Q[:,::3].dot(rD[::3])
         QS0 = Q[:,1::3].dot(rD[1::3])
         QSp = Q[:,2::3].dot(rD[2::3])
-        u0m = B.op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
-        u0p = B.op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
+        u0m = op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
+        u0p = op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
 
         row0 = np.concatenate(( QSm[1]+QSm[3], QS0[1]+QS0[3] , QSp[1]+QSp[3], np.zeros(N3-N2)))
         row1 = np.concatenate(( u0m          , np.zeros(N0+1), u0p          , np.zeros(N3-N2)))
         row2 = np.concatenate(( QSm[5]+QSm[7], QS0[5]+QS0[7] , QSp[5]+QSp[7], np.zeros(N3-N2)))
 
     elif bc_type == 'no-slip':
-        row0 = np.concatenate((                B.op('r=1', N, 0, ell-1), np.zeros(N3-N0)))
-        row1 = np.concatenate((np.zeros(N0+1), B.op('r=1', N, 0, ell),   np.zeros(N3-N1)))
-        row2 = np.concatenate((np.zeros(N1+1), B.op('r=1', N, 0, ell+1), np.zeros(N3-N2)))
+        row0 = np.concatenate((                op('r=1', N, 0, ell-1), np.zeros(N3-N0)))
+        row1 = np.concatenate((np.zeros(N0+1), op('r=1', N, 0, ell),   np.zeros(N3-N1)))
+        row2 = np.concatenate((np.zeros(N1+1), op('r=1', N, 0, ell+1), np.zeros(N3-N2)))
 
     else:
         raise ValueError("bc_type must be one of 'no-slip' or 'stress-free'")
@@ -186,7 +162,7 @@ def build_matrices(B, state_vector, m, Ekman, alpha_BC, bc_type):
     ell_range = range(m, B.L_max+1)
     Mmats, Lmats, Qmats = [], [], []
     for ell in ell_range:
-        N = B.N_max - B.N_min(ell-B.R_max)
+        N = B.N_max - ball128.N_min(ell-B.R_max)
         M_ell, L_ell, Q_ell = ell_matrices(B, N, ell, Ekman, alpha_BC, bc_type)
         Mmats.append(M_ell.astype(np.complex128))
         Lmats.append(L_ell.astype(np.complex128))
@@ -207,27 +183,10 @@ def build_matrices(B, state_vector, m, Ekman, alpha_BC, bc_type):
         Q = sparse.block_diag([Q_ell for Q_ell in Qmats])
         M, L, C = M @ Q, L @ Q, C @ Q
 
-    Amat = L + C
-    Bmat = -Ekman * M
+    Amat = L + 2*C
+    Bmat = -M
     return Amat, Bmat
 
-
-def checkdir(filename):
-    path = os.path.dirname(os.path.abspath(filename))
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-
-def save_data(filename, data):
-    checkdir(filename)
-    with open(filename, 'wb') as f:
-        pickle.dump(data, f)
-
-
-def save_figure(filename, fig):
-    checkdir(filename)
-    fig.savefig(filename)
-    
 
 def make_filename_prefix(directory='data'):
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
@@ -265,30 +224,37 @@ def solve_eigenproblem(B, m, domain, Ekman, boundary_condition):
 
 
 def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
+    plot_pressure = True
     plot_velocity = False
     evalue, evector = evalues[index], evectors[:,index]
 
-    u = ball.TensorField_3D(1, B, domain)
-    p = ball.TensorField_3D(0, B, domain)
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
-    state_vector.unpack(evector, {'u':u['c'], 'p':p['c']})
 
-    # Upsample the result
-    res = 256
-    L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
-    p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
-    names, fields = ['p'], [p['g'][0]]
+    maxreal, maximag = np.max(np.abs(evector.real)), np.max(np.abs(evector.imag))
+    which = 'real' if maxreal > maximag else 'imag'
+    print('Plotting {} part of eigenvector'.format(which))
+    print('  imag/real ratio: {}'.format(maximag/maxreal))
+
+    nr, ntheta = 1024, 1025
+    z, _ = ball128.quadrature(nr,a=0.0)
+    cos_theta, _ = sphere128.quadrature(ntheta)
+
+    # Collect fields, converting to grid space
+    fielddict = {}
+    if plot_pressure:
+        p = make_tensor_coeffs(m, B.L_max, B.N_max, B.R_max, rank=0, dtype='complex128')
+        state_vector.unpack(evector, {'p': p})
+        pfield = expand_field(p, m, B.L_max, B.N_max, B.R_max, z, cos_theta)
+        fielddict['p'] = pfield.real if np.max(abs(pfield.real)) > np.max(abs(pfield.imag)) else pfield.imag
+
     if plot_velocity:
-        u, _, _, _ = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-        names += ['u_r', 'u_θ', 'u_φ']
-        fields += [u['g'][i] for i in [0,1,2]]
+        raise ValueError('Not implemented')
+        u = make_tensor_coeffs(m, B.L_max, B.N_max, B.R_max, rank=1)
+        state_vector.unpack(evector, {'u': u})
+        fielddict['u'] = expand_field(u, m, B.L_max, B.N_max, B.R_max, z, cos_theta)
 
-    angle = 0.
-    # Plot velocity
-    for index, name in enumerate(names):
-        fig, ax = plotmeridionalslice(fields[index], r, theta, phi, angle=angle)
-        fig.suptitle('${}$,  λ = {:1.4e}'.format(name, evalue))
-        fig.show()
+    # Plot
+    plot_fields(fielddict, z, cos_theta, colorbar=False)
 
 
 def plot_solution(B, m, domain, Ekman, boundary_condition):
@@ -317,16 +283,16 @@ def plot_solution(B, m, domain, Ekman, boundary_condition):
 
 
 def main():
-    solve = False
+    solve = True
     plot = True
 
     # Create the domain
     m, Ekman = 14, 1e-5
-    L_max, N_max = 40, 40
+    L_max, N_max = 32, 32
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
 
-    B, domain = build_ball(L_max=L_max, N_max=N_max)
+    B, domain = build_ball(m, L_max, N_max)
 
     if solve:
         solve_eigenproblem(B, m, domain, Ekman, boundary_condition)

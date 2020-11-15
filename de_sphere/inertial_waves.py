@@ -1,67 +1,46 @@
-from dedalus_sphere import ball_wrapper as ball
-from dedalus_sphere import ball128
-import dedalus.public as de
-from dedalus.core.distributor import Distributor
+import os, pickle
 import numpy as np
 import scipy.sparse as sparse
-from mpi4py import MPI
-import boussinesq
-from state_vector import StateVector
-from eigtools import eigsort, scipy_sparse_eigs
-from plot_tools import dealias, plotequatorialslice, plotmeridionalslice, plotequatorialquiver, plotmeridionalquiver
 import matplotlib.pyplot as plt
 
+from dedalus_sphere import ball128, sphere128
 
-def build_ball(L_max, N_max):
-    R_max = 3
-    L_dealias = 1
-    N_dealias = 1
-    N_r = N_max
+import boussinesq
+from state_vector import StateVector
 
-    # Find MPI rank
-    comm = MPI.COMM_WORLD
+from spherinder.eigtools import eigsort, plot_spectrum
 
-    # Make domain
-    mesh=[1]
-    phi_basis = de.Fourier('phi',2*(L_max+1), interval=(0,2*np.pi),dealias=L_dealias)
-    theta_basis = de.Fourier('theta', L_max+1, interval=(0,np.pi),dealias=L_dealias)
-    r_basis = de.Fourier('r', N_max+1, interval=(0,1),dealias=N_dealias)
-    domain = de.Domain([phi_basis,theta_basis,r_basis], grid_dtype=np.float64, mesh=mesh)
+from utilities import build_ball, make_tensor_coeffs, expand_field, plot_fields
+from utilities import save_data, save_figure
 
-    domain.global_coeff_shape = np.array([L_max+1,L_max+1,N_max+1])
-    domain.distributor = Distributor(domain,comm,mesh)
 
-    th_m_layout  = domain.distributor.layouts[2]
-    r_ell_layout = domain.distributor.layouts[1]
-
-    m_start   = th_m_layout.slices(scales=1)[0].start
-    m_end     = th_m_layout.slices(scales=1)[0].stop-1
-    ell_start = r_ell_layout.slices(scales=1)[1].start
-    ell_end   = r_ell_layout.slices(scales=1)[1].stop-1
-
-    # set up ball
-    N_theta = int((L_max+1)*L_dealias)
-    N_r     = int((N_r+1)*N_dealias)
-    B = ball.Ball(N_max,L_max,N_theta=N_theta,N_r=N_r,R_max=R_max,ell_min=ell_start,ell_max=ell_end,m_min=m_start,m_max=m_end,a=0.)
-
-    return B, domain
+g_file_prefix = 'inertial_waves'
 
 
 def ntau(ell):
     return 0 if ell == 0 else 1
-    # return 0 if ell == 0 else 3
 
 
 def ell_matrices(B, N, ell, alpha_BC):
     """Construct grad.phi and boundary conditions for the inertial waves problem"""
+    def op(op_name,N,k,ell,a=B.a,dtype=np.float64):
+        return ball128.operator(op_name,N,k,ell,a=a).astype(dtype)
+
+    def xi(mu,ell):
+        # returns xi for ell > 0 or ell = 0 and mu = +1
+        # otherwise returns 0.
+        if (ell > 0) or (ell == 0 and mu == 1):
+            return ball128.xi(mu,ell)
+        return 0.
+
     def D(mu,i,deg):
-        if mu == +1: return B.op('D+',N,i,ell+deg)
-        if mu == -1: return B.op('D-',N,i,ell+deg)
+        if mu == +1: return op('D+',N,i,ell+deg)
+        if mu == -1: return op('D-',N,i,ell+deg)
 
     def C(alpha,deg): return ball128.connection(N,ell+deg,alpha_BC,alpha)
 
-    Z = B.op('0',N,0,ell)
-    I = B.op('I',N,0,ell)
+    Z = op('0',N,0,ell)
+    I = op('I',N,0,ell)
 
     N0 = N
     N1 = N + N0 + 1
@@ -70,7 +49,7 @@ def ell_matrices(B, N, ell, alpha_BC):
 
     if ell == 0:
         # Set u, p == 0
-        I = B.op('I',N,0,ell).tocsr()
+        I = op('I',N,0,ell).tocsr()
         M = sparse.bmat([[Z,Z,Z,Z],
                          [Z,Z,Z,Z],
                          [Z,Z,Z,Z],
@@ -82,11 +61,11 @@ def ell_matrices(B, N, ell, alpha_BC):
         E = sparse.block_diag([Z, Z, Z, Z])
         return M, L, E
 
-    xim, xip = B.xi([-1,+1],ell)
+    xim, xip = xi([-1,+1],ell)
 
-    M00 = B.op('E',N,0,ell-1)
+    M00 = op('E',N,0,ell-1)
     M11 = I
-    M22 = B.op('E',N,0,ell+1)
+    M22 = op('E',N,0,ell+1)
 
     M=sparse.bmat([[M00,   Z,   Z,  Z],
                    [  Z, M11,   Z,  Z],
@@ -105,8 +84,9 @@ def ell_matrices(B, N, ell, alpha_BC):
                      [L30, Z, L32, Z  ]]).tocsr()
 
     # u.r = 0 on boundary
-    u0m = B.op('r=1',N,0,ell-1)*B.Q[(ell,1)][1,0]
-    u0p = B.op('r=1',N,0,ell+1)*B.Q[(ell,1)][1,2]
+    Q = boussinesq.make_Q([ell],1)
+    u0m = op('r=1',N,0,ell-1)*Q[(ell,1)][1,0]
+    u0p = op('r=1',N,0,ell+1)*Q[(ell,1)][1,2]
     row = np.concatenate((u0m, np.zeros(N0+1), u0p, np.zeros(N3-N2)))
 
     tau0 = C(1,-1)[:,-1]
@@ -135,9 +115,9 @@ def ell_matrices(B, N, ell, alpha_BC):
                      [0*row,     0]])
 
     # Conversion matrices for Coriolis
-    E00 = B.op('E',N,0,ell-1)
+    E00 = op('E',N,0,ell-1)
     E11 = I
-    E22 = B.op('E',N,0,ell+1)
+    E22 = op('E',N,0,ell+1)
     E = sparse.block_diag([E00, E11, E22, Z])
 
     # Append the tau rows and columns
@@ -158,7 +138,7 @@ def build_matrices(B, state_vector, m, alpha_BC):
     ell_range = range(m, B.L_max+1)
     M, L, E = [], [], []
     for ell in ell_range:
-        N = B.N_max - B.N_min(ell-B.R_max)
+        N = B.N_max - ball128.N_min(ell-B.R_max)
         M_ell, L_ell, E_ell = ell_matrices(B, N, ell, alpha_BC)
         M.append(M_ell.astype(np.complex128))
         L.append(L_ell.astype(np.complex128))
@@ -180,16 +160,19 @@ def build_matrices(B, state_vector, m, alpha_BC):
     return Amat, Bmat
 
 
-def inertial_waves(B, m, domain):
-    print('Computing Inertial Wave Solutions')
+def make_filename_prefix(directory='data'):
+    basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
+    abspath = os.path.join(basepath, g_file_prefix)
+    return os.path.join(abspath, g_file_prefix)
 
+
+def output_filename(m, Lmax, Nmax, directory, ext, prefix='evalues'):
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}' + ext
+
+
+def solve_eigenproblem(B, m, domain):
+    print(f'Computing Inertial Wave Solutions, m = {m}, L_max = {B.L_max}, N_max = {B.N_max}')
     alpha_BC = 0
-    save_plots = True
-
-    if save_plots:
-        def savefig(fn): plt.savefig(fn)
-    else:
-        def savefig(_): pass
 
     # Construct the state vector
     state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
@@ -199,141 +182,103 @@ def inertial_waves(B, m, domain):
     Amat, Bmat = build_matrices(B, state_vector, m, alpha_BC=alpha_BC)
 
     # Compute eigenvalues
-    print('  Solving eigenproblem for m = {}, size {}x{}'.format(m, np.shape(Amat)[0], np.shape(Amat)[1]))
-    lam, v = eigsort(Amat.todense(), Bmat.todense())
+    print('  Solving eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(
+        m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]))
+    evalues, evectors = eigsort(Amat.todense(), Bmat.todense())
 
-    # Print the eigenvalues
-    print('    m: {:2d},  largest real eigenvalue: {}'.format(m, lam[-1]))
-
-    # Analytic eigenvalues are in real and in the interval [-2,2].
-    # They are solutions to the eigenvalue problem:
-    #   m * P_l^|m|(λ/2) = 2*(1 - λ**2/4) * d/dλ P_l^|m|(λ/2),
-    dirtylam = np.copy(lam)
-#    bad = np.logical_or(np.abs(lam.imag) > 1e-12, np.abs(lam.real) > 2)
-    bad = np.abs(lam.real) > 2
-    lam[bad] = np.nan
-    v = v[:,np.isfinite(lam)]
-    lam = lam[np.isfinite(lam)]
-
-    ntotal = np.shape(Amat)[0]
-    print("  Number of good eigenvalues = {}/{}".format(len(lam), ntotal))
-    maximag = np.max(np.abs(lam.imag))
-    print("  Largest imaginary part: {}".format(maximag))
-
-    plt.plot(np.real(dirtylam), np.imag(dirtylam), '.', markersize=3, color='tab:orange')
-    plt.plot(np.real(lam), np.imag(lam), '.', markersize=3, color='tab:blue')
-    plt.xlabel('Real(λ)')
-    plt.ylabel('Imag(λ)')
-    plt.title('Inertial Wave Eigenvalues, m = {}, Lmax = {}'.format(m, B.L_max))
-    plt.xlim([-2.1,2.1])
-    plt.ylim([-1,1])
-    plt.grid(True)
-    # filename = 'figures/inertial_waves/inertial_wave_eigenvalues-m={}-Lmax={}'.format(m, B.L_max)
-    # savefig(filename + '.eps')
-
-    targets = {}  # Greenspan targets, final index == m
-    targets[(2,1,1)] = 1
-    targets[(4,1,1)] = -0.820
-    targets[(4,2,1)] = 1.708
-    targets[(4,3,1)] = 0.612
-    targets[(6,1,1)] = -1.404217
-    targets[(6,2,1)] = -0.537334
-    targets[(8,1,1)] = -1.644733
-    targets[(8,2,1)] = -1.094069
-    targets[(8,3,1)] = -0.400086
-    targets[(10,1,1)] = -1.764983
-    targets[(10,2,1)] = -1.389747
-    targets[(10,3,1)] = -0.893074
-    targets[(10,4,1)] = -0.318776
-    targets[(4,1,0)] = 1.309
-    targets[(6,1,0)] = 0.938
-    targets[(6,2,0)] = 1.660
-    targets[(8,1,0)] = 0.726
-    targets[(8,2,0)] = 1.354
-    targets[(8,3,0)] = 1.800
-    targets[(10,1,0)] = 0.591516
-    targets[(10,2,0)] = 1.130471
-    targets[(10,3,0)] = 1.568967
-    targets[(10,4,0)] = 1.868003
-
-    targets = {}
-    targets[(130, (130-95)//2, 95)] = -0.053348
-
-    target_ids = [key for key in targets.keys() if key[2] == m]
-    for index in target_ids:
-        modestr = str(index[0]) + str(index[1]) + str(index[2])
-
-        eval_target = targets[index]
-        ind = np.argmin(abs(lam - eval_target))
-        eval = lam[ind]
-        evec = v[:, ind]
-
-        print("  Plotting eigenvectors for Greenspan Mode {}, λ = {:5f}...".format(index,eval))
-        # Unpack the eigenvector into our tensor fields
-        u = ball.TensorField_3D(1, B, domain)
-        p = ball.TensorField_3D(0, B, domain)
-        state_vector.unpack(evec, {'u':u['c'], 'p':p['c']})
-
-        angle = 0.
-        filename = lambda field, sl: 'figures/inertial_waves/inertial_wave-mode={}-field={}-slice={}.png'.format(modestr, field, sl)
-
-        # Dealias for plotting
-        res = 256
-        L_factor, N_factor = res // (B.L_max + 1), res // (B.N_max + 1)
-        p, r, theta, phi = dealias(B, domain, p, L_factor=L_factor, N_factor=N_factor)
-
-        """
-        u, r, theta, phi = dealias(B, domain, u, L_factor=L_factor, N_factor=N_factor)
-        ur, utheta, uphi = u['g'][0], u['g'][1], u['g'][2]
+    # Output data
+    data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max,
+            'evalues': evalues, 'evectors': evectors}
+    filename = output_filename(m, B.L_max, B.N_max, directory='data', ext='.pckl')
+    save_data(filename, data)
 
 
-        # Plot
-        # if m > 0:
-        if False:
-            plotequatorialslice(ur, r, theta, phi)
-            plt.title('Greenspan Mode {}, Equatorial Slice, $u_r$'.format(index))
-            savefig(filename('ur', 'e'))
+def plot_spectrum_callback(index, evalues, evectors, B, m, domain):
+    plot_pressure = True
+    plot_velocity = False
+    evalue, evector = evalues[index], evectors[:,index]
 
-            plotequatorialslice(utheta, r, theta, phi)
-            plt.title('Greenspan Mode {}, Equatorial Slice, $u_Θ$'.format(index))
-            savefig(filename('utheta', 'e'))
+    state_vector = StateVector(B, 'mlr', [('u',1),('p',0)], ntau=ntau, m_min=m, m_max=m)
 
-            plotequatorialslice(uphi, r, theta, phi)
-            plt.title('Greenspan Mode {}, Equatorial Slice, $u_ϕ$'.format(index))
-            savefig(filename('uphi', 'e'))
+    maxreal, maximag = np.max(np.abs(evector.real)), np.max(np.abs(evector.imag))
+    which = 'real' if maxreal > maximag else 'imag'
+    print('Plotting {} part of eigenvector'.format(which))
+    print('  imag/real ratio: {}'.format(maximag/maxreal))
 
-        plotmeridionalslice(ur, r, theta, phi, angle=angle)
-        plt.title('Greenspan Mode {}, Meridional Slice, $u_r$'.format(index))
-        savefig(filename('ur', 'm'))
+    nr, ntheta = 1024, 1025
+    z, _ = ball128.quadrature(nr,a=0.0)
+    cos_theta, _ = sphere128.quadrature(ntheta)
 
-        plotmeridionalslice(utheta, r, theta, phi, angle=angle)
-        plt.title('Greenspan Mode {}, Meridional Slice, $u_Θ$'.format(index))
-        savefig(filename('utheta', 'm'))
+    # Collect fields, converting to grid space
+    fielddict = {}
+    if plot_pressure:
+        p = make_tensor_coeffs(m, B.L_max, B.N_max, B.R_max, rank=0, dtype='complex128')
+        state_vector.unpack(evector, {'p': p})
+        pfield = expand_field(p, m, B.L_max, B.N_max, B.R_max, z, cos_theta)
+        fielddict['p'] = pfield.real if which == 'imag' else pfield.imag  # flip sense
 
-        plotmeridionalslice(uphi, r, theta, phi, angle=angle)
-        plt.title('Greenspan Mode {}, Meridional Slice, $u_φ$'.format(index))
-        savefig(filename('uphi', 'm'))
-        """
+    if plot_velocity:
+        raise ValueError('Not implemented')
+        u = make_tensor_coeffs(m, B.L_max, B.N_max, B.R_max, rank=1)
+        state_vector.unpack(evector, {'u': u})
+        fielddict['u'] = expand_field(u, m, B.L_max, B.N_max, B.R_max, z, cos_theta)
 
-        plotmeridionalslice(p['g'][0], r, theta, phi, angle=angle)
-        plt.title('Greenspan Mode {}, Meridional Slice, $p$'.format(index))
-        savefig(filename('p', 'm'))
+    # Plot
+    plot_fields(fielddict, z, cos_theta, colorbar=False)
 
-#        if save_plots:
-#            plt.close('all')
 
-    plt.show()
-    return lam, v
+def plot_solution(B, m, domain):
+    print('Plotting solution')
+    # Load the data
+    filename = output_filename(m, B.L_max, B.N_max, directory='data', ext='.pckl')
+    data = pickle.load(open(filename, 'rb'))
+
+    # Extract configuration parameters
+    evalues, evectors = data['evalues'], data['evectors']
+
+    plot_fields = True
+    if plot_fields:
+        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
+    else:
+        onpick = None
+
+    fig, ax = plot_spectrum(evalues, onpick)
+    ax.set_xlim([-2.1,2.1])
+    ax.set_title('Inertial Wave Eigenvalues')
+    ax.set_xlabel('Real(λ)')
+    ax.set_ylabel('Imag(λ)')
+
+    plot_filename = output_filename(m, B.L_max, B.N_max, directory='figures', ext='.png')
+    save_figure(plot_filename, fig)
+
+    fig.show()
+
 
 def main():
+    solve = True
+    plot = True
+
     # Create the domain
-    m = 95
-    L_max = (m-1)+20
-    N_max = 100
-    B, domain = build_ball(L_max=L_max, N_max=N_max)
+    m = 139
+    L_max = m+81
+    N_max = 110
+
+    # Extract the domain parameters
+    if L_max < m:
+        raise ValueError('No angular resolution: L_max (={}) is too small'.format(L_max))
+
+    B, domain = build_ball(m, L_max, N_max)
 
     # Solve the eigenproblem
-    lam, v = inertial_waves(B, m, domain)
+    if solve:
+        solve_eigenproblem(B, m, domain)
+
+    # Plot the solution
+    if plot:
+        plot_solution(B, m, domain)
+
+    plt.show()
+
 
 
 if __name__=='__main__':
