@@ -18,7 +18,7 @@ from utilities import save_data, save_figure
 from spherinder.eigtools import eigsort, plot_spectrum
 
 
-g_file_prefix = 'hydrodynamics'
+g_file_prefix = 'dedalus_hydrodynamics'
 automatic_boundary_conditions = False
 
 if automatic_boundary_conditions:
@@ -288,7 +288,7 @@ def main():
 
     # Create the domain
     m, Ekman = 14, 1e-5
-    L_max, N_max = 32, 32
+    L_max, N_max = 40, 40
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
 
