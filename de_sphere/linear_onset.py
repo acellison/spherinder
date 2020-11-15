@@ -16,7 +16,7 @@ from utilities import build_ball, make_tensor_coeffs, expand_field, plot_fields
 from utilities import save_data, save_figure
 
 
-g_file_prefix = 'critical_rayleigh_rotating'
+g_file_prefix = 'linear_onset'
 
 
 def build_matrices_ell_fun(ell, B, Ekman, Prandtl, Rayleigh, alpha_BC, boundary_condition):

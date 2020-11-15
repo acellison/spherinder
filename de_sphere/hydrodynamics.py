@@ -18,7 +18,7 @@ from utilities import save_data, save_figure
 from spherinder.eigtools import eigsort, plot_spectrum
 
 
-g_file_prefix = 'damped_inertial_waves'
+g_file_prefix = 'hydrodynamics'
 automatic_boundary_conditions = False
 
 if automatic_boundary_conditions:
