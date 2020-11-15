@@ -11,7 +11,7 @@ internal_dtype = 'float128'
 from spherinder import config
 config.internal_dtype = internal_dtype
 
-import spherinder.spherinder as sph
+import spherinder.operators as sph
 from spherinder.eigtools import eigsort
 from fileio import save_data, save_figure
 

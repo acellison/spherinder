@@ -1,6 +1,6 @@
 import os
 
-from spherinder import Basis, plotfield
+from spherinder.operators import Basis, plotfield
 import numpy as np
 import matplotlib.pyplot as plt
 

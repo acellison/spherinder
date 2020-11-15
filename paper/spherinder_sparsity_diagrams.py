@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-import spherinder as sph
+import spherinder.operators as sph
 
 
 m, Lmax, Nmax, alpha, sigma = 1, 8, 10, 0, 0

@@ -10,7 +10,7 @@ from dedalus_sphere import jacobi as Jacobi
 from spherinder import config
 config.internal_dtype = 'float64'
 
-import spherinder as sph
+import spherinder.operators as sph
 from spherinder.eigtools import eigsort
 from fileio import save_data, save_figure
 

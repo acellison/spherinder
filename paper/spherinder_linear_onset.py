@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
-import spherinder as sph
+import spherinder.operators as sph
 from spherinder.eigtools import eigsort, scipy_sparse_eigs, plot_spectrum, discard_spurious_eigenvalues
 from fileio import save_data, save_figure
 
