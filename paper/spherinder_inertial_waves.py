@@ -35,8 +35,8 @@ def matrices(m, Lmax, Nmax, boundary_method):
     """
     alpha_bc_p = 0    # tau polynomial basis in u(+) equation, no greater than 1
     alpha_bc_z = 0    # tau polynomial basis in u(z) equation, no greater than 1
-    alpha_bc_div = 0  # tau polynomial basis in div equation, no greater than 2
-    beta_bc_p = 0     # tau polynomial basis shift, no greater than 1
+    alpha_bc_div = 1  # tau polynomial basis in div equation, no greater than 2
+    beta_bc_p = 1     # tau polynomial basis shift, no greater than 1
     beta_bc_z = 0     # tau polynomial basis shift, no greater than 1
     beta_bc_div = 0   # tau polynomial basis shift, no greater than 2
 
@@ -268,9 +268,10 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
 
 
 def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
-    save_plots = False
+    save_plots = True
     n = m+61
-    num_modes = 6
+#    n = 60
+    num_modes = 4
     modes = list(zip([n]*num_modes, range(num_modes)))
 
     # Load the data
@@ -321,7 +322,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     # Get the target eigenpair
     ns, neta = 256, 257
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    fig, ax = plt.subplots(1,len(modes),figsize=(3*num_modes,5))
+    fig, ax = plt.subplots(1,len(modes),figsize=(3*num_modes-1,5))
     for i, (n, ell) in enumerate(modes):
         # Compute the analytic eigenfrequency
         mode_index = (n,(n-m)//2-ell,m)
@@ -338,7 +339,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         f = Fgrid.real if relative_real > 0.5 else Fgrid.imag
         sph.plotfield(s, eta, f, colorbar=False, fig=fig, ax=ax[i])
         ax[i].set_title(f'$\lambda = ${evalue_target:.4f}')
-            
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
         # Compute the analytic pressure mode
         ss, ee = s[np.newaxis,:], eta[:,np.newaxis]
         zz = ee * np.sqrt(1 - ss**2)
@@ -376,12 +380,12 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
 
 def main():
-    solve = True
+    solve = False
     plot_evalues = True
     plot_fields = True
 
-    m = 139
-    Lmax, Nmax = 30, 42
+    m = 95
+    Lmax, Nmax = 24, 32
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))
