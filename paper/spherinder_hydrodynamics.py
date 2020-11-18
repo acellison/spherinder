@@ -250,18 +250,21 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fields = [u,v,w,p]
     field_names = ['u','v','w','p']
 
-    fig, ax = plt.subplots(1,len(field_indices),figsize=(9,4.5))
+    fig, ax = plt.subplots(1,len(field_indices),figsize=(7,4.5))
     for i in range(len(field_indices)):
         field_index = field_indices[i]
         f = fields[field_index]
-        sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i])
+        sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i], colorbar=False)
         ax[i].set_title(r'${}$'.format(field_names[field_index]))
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
 
         if field_index in [0,1,2]:
             error = max(np.linalg.norm(f[0,:]), np.linalg.norm(f[-1,:]))
             print('Boundary error, {}: {}'.format(field_names[field_index], error))
 
-    fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
+    fig.suptitle('λ = {:1.4f}'.format(evalue))
     fig.show()
 
 
@@ -272,6 +275,14 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
 
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
+
+    # Only plot the eigenvalues with accurate eigenvectors
+    tolerance = .02
+    ncoeff = Lmax*Nmax
+    good = [np.linalg.norm(evectors[4*ncoeff:,i]) < tolerance for i in range(len(evalues))]
+    print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
+    evalues = evalues[good]
+    evectors = evectors[:,good]
 
     if plot_fields:
         ns, neta = 256, 255
@@ -299,8 +310,8 @@ def main():
     plot_fields = True
     boundary_method = 'galerkin'
 
-    m, Ekman = 30, 1e-6
-    Lmax, Nmax = 52, 52
+    m, Ekman = 30, 10**-6
+    Lmax, Nmax = 75, 75
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))

@@ -1,25 +1,40 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+import multiprocessing as mp
 
 from dedalus_sphere import jacobi as Jacobi
 from dedalus_sphere import operators
-from .config import internal_dtype
+from .config import internal_dtype, max_processes
 
 
 class Basis():
-    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True):
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True, parallel=True):
         self.s, self.eta = s, eta
         self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
         self.sigma, self.alpha, self.beta = sigma, alpha, beta
         self.dtype, self.internal = dtype, internal
         self.galerkin = galerkin
+        self.parallel = parallel
 
         if not lazy:
             _construct_basis(self)
         else:
             self.sbasis, self.etabasis = None, None
             self._constructed = False
+
+
+    class _Constructor():
+        """Helper object to parallelize basis construction"""
+        def __init__(self, Nmax, m, sigma, alpha, beta, t, onept, onemt, internal, dtype):
+            self.Nmax, self.m, self.sigma, self.alpha, self.beta = Nmax, m, sigma, alpha, beta
+            self.internal, self.dtype = internal, dtype
+            self.t, self.onept, self.onemt = t, onept, onemt
+        def __call__(self, ell):
+            Nmax, m, sigma, alpha, beta = self.Nmax, self.m, self.sigma, self.alpha, self.beta
+            internal, dtype = self.internal, self.dtype
+            t, onept, onemt = self.t, self.onept, self.onemt
+            return ((onept * onemt**ell) * Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
 
 
     def _construct_basis(self):
@@ -34,15 +49,20 @@ class Basis():
         else:
             escale, sscale = 1, 1
 
+        # Construct the eta basis
         etabasis = (escale * Jacobi.polynomials(Lmax,alpha,alpha,eta,dtype=internal)).T
         etabasis = etabasis.astype(dtype)
 
-        sbasis = []
+        # Construct the s basis
         onept = sscale * (1+t)**((m+sigma)/2)
         onemt = (1-t)**(1/2)
-        for ell in range(Lmax):
-            Ps = (onept * onemt**ell) * Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)
-            sbasis.append(Ps.astype(dtype))
+        fun = Basis._Constructor(Nmax, m, sigma, alpha, beta, t, onept, onemt, internal, dtype)
+        if self.parallel:
+            num_processes = min(mp.cpu_count(), max_processes)
+            pool = mp.Pool(num_processes)
+            sbasis = pool.map(fun, range(Lmax))
+        else:
+            sbasis = [fun(ell) for ell in range(Lmax)]
 
         self.sbasis, self.etabasis = sbasis, etabasis
         self._constructed = True
@@ -51,7 +71,6 @@ class Basis():
     def expand(self, coeffs):
         if not self._constructed:
             self._construct_basis()
-
 
         if np.shape(coeffs) != (self.Lmax, self.Nmax):
             raise ValueError('Inconsistent shape')
