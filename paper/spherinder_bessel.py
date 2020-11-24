@@ -11,7 +11,7 @@ from spherinder import config
 config.internal_dtype = 'float64'
 
 import spherinder.operators as sph
-from spherinder.eigtools import eigsort
+from spherinder.eigtools import eigsort, plot_spectrum
 from fileio import save_data, save_figure
 
 g_file_prefix = 'spherinder_bessel'
@@ -250,13 +250,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
     # Plot the eigenvalues
     if plot_evalues:
-        fig, ax = plt.subplots()
-        ax.plot(evalues.real, evalues.imag, '.', markersize=3, color='tab:blue')
-        ax.grid()
-        ax.set_xlabel('Real(λ)')
-        ax.set_ylabel('Imag(λ)')
+        fig, ax = plot_spectrum(evalues)
         ax.set_title('Bessel Eigenvalues in the Stretched Sphere')
-        fig.set_tight_layout(True)
 
         filename = prefix + '-evalues-' + configstr + '.png'
         save(filename, fig)

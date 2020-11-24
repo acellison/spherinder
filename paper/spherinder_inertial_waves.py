@@ -12,7 +12,7 @@ from spherinder import config
 config.internal_dtype = internal_dtype
 
 import spherinder.operators as sph
-from spherinder.eigtools import eigsort
+from spherinder.eigtools import eigsort, plot_spectrum
 from fileio import save_data, save_figure
 
 
@@ -304,14 +304,9 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
     # Plot the eigenvalues
     if plot_evalues:
-        fig, ax = plt.subplots()
-        ax.plot(evalues_in_range.real, evalues_in_range.imag, '.', markersize=3, color='tab:blue')
-        ax.grid()
-        plt.xlim([-2.1,2.1])
-        ax.set_xlabel('Real(λ)')
-        ax.set_ylabel('Imag(λ)')
+        fig, ax = plot_spectrum(evalues_in_range)
+        ax.set_xlim([-2.1,2.1])
         ax.set_title(f'Inertial Wave Eigenvalues, $m$ = {m}')
-        fig.set_tight_layout(True)
 
         filename = prefix + '-evalues-' + configstr + '.png'
         save(filename, fig)

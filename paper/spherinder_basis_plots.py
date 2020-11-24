@@ -65,7 +65,6 @@ def plot_basis(basis, ell, s, eta):
         if col == ncols:
             col = 0
             row += 1
-    fig.set_tight_layout(True)
     
     filename = output_filename(basis.m, ell, directory='figures', ext='.png', prefix='modes')
     save_figure(filename, fig, dpi=200)
