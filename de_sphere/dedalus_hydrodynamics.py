@@ -15,7 +15,7 @@ from plot_tools import dealias, plotmeridionalslice
 from utilities import build_ball, make_tensor_coeffs, expand_field, plot_fields
 from utilities import save_data, save_figure
 
-from spherinder.eigtools import eigsort, plot_spectrum
+from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 
 
 g_file_prefix = 'dedalus_hydrodynamics'
@@ -198,8 +198,8 @@ def output_filename(m, Lmax, Nmax, boundary_condition, Ekman, directory, ext, pr
     return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_condition}' + ext
 
 
-def solve_eigenproblem(B, m, domain, Ekman, boundary_condition):
-    print('Computing Inertial Wave Solutions...')
+def solve_eigenproblem(B, m, domain, Ekman, boundary_condition, nev, evalue_target):
+    print('Computing Hydrodynamics Solutions...')
 
     alpha_BC = 0
 
@@ -212,7 +212,11 @@ def solve_eigenproblem(B, m, domain, Ekman, boundary_condition):
 
     # Compute eigenvalues
     print('  Solving eigenproblem for m = {}, size {}x{}'.format(m, np.shape(Amat)[0], np.shape(Amat)[1]))
-    evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), cutoff=1e9)
+    if nev == 'all':
+        evalues, evectors = eigsort(Amat.todense(), Bmat.todense(), cutoff=1e9)
+    else:
+        matsolver = 'SuperluColamdFactorized'
+        evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=evalue_target, matsolver=matsolver, profile=True)
 
     # Output data
     data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max, 
@@ -272,9 +276,7 @@ def plot_solution(B, m, domain, Ekman, boundary_condition):
         onpick = None
 
     fig, ax = plot_spectrum(evalues, onpick)
-    ax.set_title('Hydrodynamics Eigenvalues')
-    ax.set_xlabel('Real(λ)')
-    ax.set_ylabel('Imag(λ)')
+    ax.set_title('Dedalus Sphere Basis')
 
     plot_filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
@@ -283,19 +285,20 @@ def plot_solution(B, m, domain, Ekman, boundary_condition):
 
 
 def main():
-    solve = True
+    solve = False
     plot = True
 
     # Create the domain
-    m, Ekman = 14, 1e-5
-    L_max, N_max = 40, 40
+#    m, Ekman, L_max, N_max, nev, evalue_target = 14, 1e-5, 40, 40, 'all', None
+    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 250, 250, 1000, -0.0070738+0.060679j
+
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
 
     B, domain = build_ball(m, L_max, N_max)
 
     if solve:
-        solve_eigenproblem(B, m, domain, Ekman, boundary_condition)
+        solve_eigenproblem(B, m, domain, Ekman, boundary_condition, nev, evalue_target)
 
     if plot:
         plot_solution(B, m, domain, Ekman, boundary_condition)
