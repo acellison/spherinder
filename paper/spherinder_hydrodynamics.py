@@ -6,7 +6,7 @@ import os
 import pickle
 
 import spherinder.operators as sph
-from spherinder.eigtools import eigsort, plot_spectrum
+from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
 
 
@@ -167,7 +167,7 @@ def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext):
     return make_filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}' + ext
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target):
     # Construct the system
     print('Constructing matrix system...')
     M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman)
@@ -189,7 +189,11 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy):
 
     # Compute the eigenvalues and eigenvectors
     print('Eigenvalue problem, size {}'.format(np.shape(L)))
-    evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
+    if nev == 'all':
+        evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
+    else:
+        matsolver = 'UmfpackFactorized64'
+        evalues, evectors = scipy_sparse_eigs(L, M, N=nev, target=evalue_target, matsolver=matsolver, profile=True)
 
     if enable_permutation:
         vari = invert_permutation(var)
@@ -277,7 +281,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
     evalues, evectors = data['evalues'], data['evectors']
 
     # Only plot the eigenvalues with accurate eigenvectors
-    tolerance = .02
+#    tolerance = .01
+    tolerance = np.inf
     ncoeff = Lmax*Nmax
     good = [np.linalg.norm(evectors[4*ncoeff:,i]) < tolerance for i in range(len(evalues))]
     print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
@@ -293,9 +298,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
         onpick = None
 
     fig, ax = plot_spectrum(evalues, onpick)
-    ax.set_title('Hydrodynamics Eigenvalues')
-    ax.set_xlabel('Real(λ)')
-    ax.set_ylabel('Imag(λ)')
+    ax.set_title('Spherinder Basis')
 
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
@@ -310,21 +313,22 @@ def main():
     plot_fields = True
     boundary_method = 'galerkin'
 
-    m, Ekman = 30, 10**-6
-    Lmax, Nmax = 75, 75
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 200, 200, 400, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 400, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
     print('  Boundary method = ' + boundary_method)
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
         plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fields)
         plt.show()
 
 
-if __name__=='__main__':
+if __name__=='__main__'0:
     main()
 
