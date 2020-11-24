@@ -504,13 +504,13 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, 
         ax[i].set_title(r'${}$'.format(field))
 
     fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
+    fig.set_tight_layout(True)
 
-    m, Lmax, Nmax, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['boundary_method']
-    Ekman, Prandtl, Rayleigh = domain['Ekman'], domain['Prandtl'], domain['Rayleigh']
-
-    prefix = 'fields=' + str(fields).replace('[','').replace(']','').replace(' ','').replace('\'\'','_').replace('\'','')
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix=prefix)
-    save_figure(plot_filename, fig, dpi=1200)
+#    m, Lmax, Nmax, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['boundary_method']
+#    Ekman, Prandtl, Rayleigh = domain['Ekman'], domain['Prandtl'], domain['Rayleigh']
+#    prefix = 'fields=' + str(fields).replace('[','').replace(']','').replace(' ','').replace('\'\'','_').replace('\'','')
+#    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix=prefix)
+#    save_figure(plot_filename, fig, dpi=1200)
 
     fig.show()
 
@@ -523,27 +523,26 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
+    # Now only plot the eigenvalues with accurate eigenvectors
+    tolerance = .02
+    nfields, ncoeff = 5, Lmax*Nmax
+    good = [np.linalg.norm(evectors[nfields*ncoeff:,i]) < tolerance for i in range(len(evalues))]
+    print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
+    evalues, evectors = evalues[good], evectors[:,good]
+
     error_only = not plot_fields
     ns, neta = 1024, 1025
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-#    if Lmax*Nmax < 2400:  # About 6GB in basis storage for four fields at (ns,neta) = (256,255)
-    if True:
-        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    else:
-        bases = None
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
     domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method,
               'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=error_only)
 
     fig, ax = plot_spectrum(evalues, onpick)
     ax.set_title('Boussinesq Eigenvalues')
-    ax.set_xlabel('Real(λ)')
-    ax.set_ylabel('Imag(λ)')
 
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
-
-    fig.show()
 
 
 def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
@@ -559,10 +558,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     # Create the plotting domain
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    if Lmax*Nmax < 2400:  # About 6GB in basis storage for (ns,neta) = (256,255)
-        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    else:
-        bases = None
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
     domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method}
 
     # Plot
@@ -614,9 +610,9 @@ def rotation_configs():
             ]
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
-    plot_evalues = False
+    plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 #    nev = 'all'
