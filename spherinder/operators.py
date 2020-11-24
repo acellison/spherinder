@@ -169,7 +169,7 @@ def resize(mat, Lin, Nin, Lout, Nout):
 def triangular_truncate(mat, Lmax, Nmax):
     if Nmax <= Lmax:
         raise ValueError('Radial degree too small for triangular truncation')
-    Nout = lambda ell: Nmax-ell
+    Nout = lambda ell: Nmax-ell//2
 
     # truncate columns
     mat = resize(mat.T, Lmax, Nmax, Lmax, Nout).T
