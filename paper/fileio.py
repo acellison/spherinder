@@ -16,5 +16,6 @@ def save_data(filename, data):
 
 def save_figure(filename, fig, *args, **kwargs):
     checkdir(filename)
+    fig.set_tight_layout(True)
     fig.savefig(filename, *args, **kwargs)
     
