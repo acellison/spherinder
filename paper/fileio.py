@@ -1,6 +1,9 @@
 import os
 import pickle
 
+import matplotlib
+matplotlib.rcParams.update({'font.size': 14})
+
 
 def checkdir(filename):
     path = os.path.dirname(os.path.abspath(filename))

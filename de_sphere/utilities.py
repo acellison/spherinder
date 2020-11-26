@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from dedalus_sphere import ball128, sphere128
 
+import matplotlib
+matplotlib.rcParams.update({'font.size': 14})
+
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):

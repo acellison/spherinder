@@ -292,7 +292,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
 
     # Eigenvalue plot
     fig, ax = plot_spectrum(evalues, onpick=onpick)
-    ax.set_title('Hydrodynamics Eigenvalues')
+    ax.set_title('Spherinder Basis')
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
 
