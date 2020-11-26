@@ -403,7 +403,7 @@ def main():
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fields)
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields)
         plt.show()
 
 
