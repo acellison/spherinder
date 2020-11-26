@@ -1,5 +1,9 @@
 import numpy as np
 import scipy.sparse as sparse
+
+
+import matplotlib
+matplotlib.rcParams.update({'font.size': 14})
 import matplotlib.pyplot as plt
 
 import os
@@ -163,8 +167,8 @@ def make_filename_prefix(directory='data'):
     return os.path.join(abspath, g_file_prefix)
 
 
-def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext):
-    return make_filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}' + ext
+def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext, prefix='evalues'):
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}' + ext
 
 
 def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target):
@@ -272,7 +276,28 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
+    # Load the data
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    data = pickle.load(open(filename, 'rb'))
+
+    # Extract configuration parameters
+    evalues, evectors = data['evalues'], data['evectors']
+
+    # Plot callback
+    ns, neta = 256, 255
+    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
+
+    # Eigenvalue plot
+    fig, ax = plot_spectrum(evalues, onpick=onpick)
+    ax.set_title('Hydrodynamics Eigenvalues')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
+    save_figure(plot_filename, fig)
+
+
+def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
     # Load the data
     filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
     data = pickle.load(open(filename, 'rb'))
@@ -286,24 +311,77 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
     ncoeff = Lmax*Nmax
     good = [np.linalg.norm(evectors[4*ncoeff:,i]) < tolerance for i in range(len(evalues))]
     print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
-    evalues = evalues[good]
-    evectors = evectors[:,good]
+    evalues, evectors = evalues[good], evectors[:,good]
 
-    if plot_fields:
-        ns, neta = 256, 255
-        s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-        onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
-    else:
-        onpick = None
+    # Plot callback
+    ns, neta = 256, 255
+    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
 
-    fig, ax = plot_spectrum(evalues, onpick)
-    ax.set_title('Spherinder Basis')
+    xlim, ylim, xticks, evalue_targets = None, None, None, None
+    if (m,Ekman) == (14,1e-5):
+        # Plot particular eigenmodes
+        evalue_targets = np.array([-0.01850901249575822+0.1241580297262777j,   \
+                                   -0.0373960620256699+0.2629720574084503j,    \
+                                   -0.04933399647917682+0.33239767254815106j,  \
+                                   -0.02587985072653081-0.036785829812208994j, \
+                                   -0.03917822055255002-0.15922951557020207j,  \
+                                   -0.05162747536026285-0.20299862623558654j])
+        xlim, ylim = [-.237,-.0067], [-.9,.9]
+        xticks = [-.2,-.15,-.1,-.05]
+    elif (m,Ekman) == (30,1e-6):
+        evalue_targets = np.array([-0.007054484980806183+0.060694054092827694j, \
+                                   -0.014753923104231194+0.12091455276390671j,  \
+                                   -0.019693538521933448+0.18512830925543186j,  \
+                                   -0.010757237569379529-0.019425097197991206j, \
+                                   -0.015971669036929946-0.07690418489506128j,  \
+                                   -0.020517842733271896-0.10502321882336622j])
+        xlim, ylim = [-.044, -.0057], [-.32,.32]
+        xticks = [-.04,-.03,-.02,-.01]
 
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
+    # Get the eigenvalue indices
+    if evalue_targets is not None:
+        evalue_indices = [np.argmin(np.abs(t-evalues)) for t in evalue_targets]
+        evalue_targets = evalues[evalue_indices]
+
+    # Plot the zoomed spectrum
+    fig, ax = plot_spectrum(evalues, onpick=onpick)
+    if evalue_targets is not None:
+        ax.plot(evalue_targets.real, evalue_targets.imag, '.', marker='s', markersize=4, color='tab:orange')
+
+    def logstr(v):
+        return r'$10^{' + str(int(np.log10(v))) + '}$'
+    ax.set_title('$m$ = {}, E = {}'.format(m, logstr(Ekman)))
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    if xticks is not None:
+        ax.set_xticks(xticks)
+
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='-zoom.png')
     save_figure(plot_filename, fig)
 
-    fig.show()
+    if evalue_targets is None:
+        return
+
+    fig, ax = plt.subplots(1,len(evalue_targets),figsize=(2.75*len(evalue_targets),5))
+    for i, index in enumerate(evalue_indices):
+        evalue, evector = evalues[index], evectors[:,index]
+
+        u, v, w, p, tau = expand_evectors(Lmax, Nmax, evector, bases)
+
+        relative_real = np.linalg.norm(np.real(p))/np.linalg.norm(p)
+        p = p.real if relative_real > 0.5 else p.imag
+        p /= np.max(abs(p))
+
+        sph.plotfield(s, eta, p, fig=fig, ax=ax[i], colorbar=False)
+        ax[i].set_title(f'$\lambda = ${evalue_target:.4f}')
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', prefix='evectors', ext='.png')
+    save_figure(plot_filename, fig)
 
 
 def main():
