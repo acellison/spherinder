@@ -307,15 +307,15 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_evalues, plot_fiel
 
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 200, 200, 400, -0.0070738+0.060679j
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 400, -0.001181+0.019639j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 200, 1000, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
@@ -329,6 +329,6 @@ def main():
         plt.show()
 
 
-if __name__=='__main__'0:
+if __name__=='__main__':
     main()
 
