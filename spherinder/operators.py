@@ -683,7 +683,7 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype):
         return RadialMultiplication(dtype=dtype, internal=internal)
     if name == '1-r**2':
         return OneMinusRadiusSquared(dtype=dtype, internal=internal)
-    if name == 'erdot':
+    if name == 'rdot':
         return RadialVector(dtype=dtype, internal=internal)
     if name in ['boundary', 'r=1']:
         return Boundary(dtype=dtype, internal=internal)

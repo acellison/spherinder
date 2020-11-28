@@ -71,7 +71,7 @@ def matrices(m, Lmax, Nmax, boundary_method):
     Divz = Div[:,2*ncoeff:]
 
     # Boundary condition
-    Rad = sph.operator('erdot', dtype='float128')(m, Lmax, Nmax, alpha=1)
+    Rad = sph.operator('rdot', dtype='float128')(m, Lmax, Nmax, alpha=1)
     Boundary = sph.operator('boundary', dtype='float128', internal='float128')(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
     Bound = Boundary @ Rad
     Bound = sph.remove_zero_rows(Bound).astype('float64')

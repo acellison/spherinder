@@ -108,7 +108,7 @@ def radial_operators():
     plot_splatter('$r$ $e_r$', Op, codomain, ax=ax[0])
     
     # e_r . sparsity structure
-    operator = sph.operator('erdot')
+    operator = sph.operator('rdot')
     codomain = [(Lmax+1,Nmax+1)]*3
     Op = operator(m,Lmax,Nmax,alpha)
     ops = [Op[:,:ncoeff],Op[:,ncoeff:2*ncoeff],Op[:,2*ncoeff:3*ncoeff]]

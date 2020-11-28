@@ -62,7 +62,7 @@ def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     Gradz = sph.resize(Gradz, Lmax-1, Nmax+1, Lmax, Nmax)
 
     # Radial vector extraction
-    Rad = sph.operator('erdot')(m, Lmax, Nmax, alpha=1)
+    Rad = sph.operator('rdot')(m, Lmax, Nmax, alpha=1)
     Cr = sph.convert_alpha(1+g_alpha_T, m, Lmax+1, Nmax+1, alpha=1, sigma=0, truncate=False)
     Rad = Cr @ Rad
     Rad = sph.resize(Rad, Lmax+1, Nmax+2, Lmax, Nmax)
@@ -225,7 +225,7 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     Gradz = sph.resize(Gradz, Lmax-1, Nmax+1, Lout, Nout)
 
     # Radial vector extraction
-    Rad = sph.operator('erdot')(m, Lout, Nout, alpha=1)
+    Rad = sph.operator('rdot')(m, Lout, Nout, alpha=1)
     Cr = sph.convert_alpha(1+g_alpha_T, m, Lout+1, Nout+1, alpha=1, sigma=0, truncate=False)
     Rad = Cr @ Rad
     Rad = sph.resize(Rad, Lout+1, Nout+2, Lout, Nout)
