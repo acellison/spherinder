@@ -9,7 +9,7 @@ from .config import internal_dtype, max_processes
 
 
 class Basis():
-    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True, parallel=True):
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True, parallel=False):
         self.s, self.eta = s, eta
         self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
         self.sigma, self.alpha, self.beta = sigma, alpha, beta
@@ -468,6 +468,30 @@ class OneMinusRadiusSquared(Operator):
         return Op.astype(self.dtype)
 
 
+class RdR(Operator):
+    """r d/dr operator on a field"""
+    def __init__(self, dtype='float64', internal=internal_dtype):
+        Operator.__init__(self, codomain=Codomain(0,+1,+1), dtype=dtype, internal=internal)
+
+    def __call__(self, m, Lmax, Nmax, alpha, sigma):
+        A, B, C, D = self.A, self.B, self.C, self.D
+
+        op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
+        gamma_ell, delta_ell = np.diag(op), -np.diag(op,2)
+ 
+        zmat = np.diag(gamma_ell)
+        smats = [((ell-(m+sigma))*A(+1) + 2*(B(+1) @ C(+1)))(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
+        Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
+
+        zmat = np.diag(delta_ell,2)
+        smats = [((ell+2*alpha+1+m+sigma)*A(-1) + 2*(B(+1) @ D(-1)))(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
+        Op2 = make_operator(zmat, smats)
+
+        Op = Op1 + Op2
+
+        return Op.astype(self.dtype)
+
+
 class Gradient(Operator):
     """Compute the gradient of a scalar field"""
     def __init__(self, dtype='float64', internal=internal_dtype):
@@ -685,6 +709,8 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype):
         return OneMinusRadiusSquared(dtype=dtype, internal=internal)
     if name == 'rdot':
         return RadialVector(dtype=dtype, internal=internal)
+    if name == 'r*d/dr':
+        return RdR(dtype=dtype, internal=internal)
     if name in ['boundary', 'r=1']:
         return Boundary(dtype=dtype, internal=internal)
     if name == 'conversion':
