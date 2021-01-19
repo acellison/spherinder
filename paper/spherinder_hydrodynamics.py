@@ -254,7 +254,7 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     evalue, evector = evalues[index], evectors[:,index]
     u, v, w, p, tau = expand_evectors(Lmax, Nmax, evector, bases)
 
-    field_indices = [0,2,3]
+    field_indices = [0,1,2,3]
     fields = [u,v,w,p]
     field_names = ['u','v','w','p']
 
@@ -262,7 +262,8 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     for i in range(len(field_indices)):
         field_index = field_indices[i]
         f = fields[field_index]
-        sph.plotfield(s, eta, f.real, fig=fig, ax=ax[i], colorbar=False)
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=True)
         ax[i].set_title(r'${}$'.format(field_names[field_index]))
         if i > 0:
             ax[i].set_yticklabels([])
