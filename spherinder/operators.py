@@ -352,14 +352,14 @@ class Conversion(Operator):
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
         A, B = self.A, self.B
         opz = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()                   # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
-        alpha_ell = np.diag(opz)
-        beta_ell = np.diag(opz,2)
+        gamma_ell = np.diag(opz)
+        delta_ell = np.diag(opz,2)
  
-        zmat = np.diag(alpha_ell)
+        zmat = np.diag(gamma_ell)
         smats = [A(+1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]  # (n,a,b) -> (n,a+1,b)
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
  
-        zmat = np.diag(beta_ell,2)
+        zmat = np.diag(delta_ell,2)
         smats = [A(-1)(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]  # (n,a,b) -> (n+1,a-1,b)
         Op2 = make_operator(zmat, smats)
  
@@ -478,7 +478,7 @@ class RdR(Operator):
 
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
         gamma_ell, delta_ell = np.diag(op), -np.diag(op,2)
- 
+
         zmat = np.diag(gamma_ell)
         smats = [((ell-(m+sigma))*A(+1) + 2*(B(+1) @ C(+1)))(Nmax,ell+alpha+1/2,m+sigma) for ell in range(Lmax)]
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
@@ -502,23 +502,23 @@ class Gradient(Operator):
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
 
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-        alpha_ell = np.diag(op)
-        beta_ell = -np.diag(op,2)
+        gamma_ell = np.diag(op)
+        delta_ell = -np.diag(op,2)
     
         # e(+)^* . Grad
-        zmat = np.diag(2*alpha_ell)
+        zmat = np.diag(2*gamma_ell)
         smats = [D(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]  # (n,a,b) -> (n-1,a+1,b+1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax)
-        zmat = np.diag(2*beta_ell,2)
+        zmat = np.diag(2*delta_ell,2)
         smats = [C(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]  # (n,a,b) -> (n,a-1,b+1)
         Op2 = make_operator(zmat, smats)
         Opp = Op1 + Op2
     
         # e(-)^* . Grad
-        zmat = np.diag(2*alpha_ell)
+        zmat = np.diag(2*gamma_ell)
         smats = [C(+1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]  # (n,a,b) -> (n,a+1,b-1)
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
-        zmat = np.diag(2*beta_ell,2)
+        zmat = np.diag(2*delta_ell,2)
         smats = [D(-1)(Nmax,ell+alpha+1/2,m) for ell in range(Lmax)]  # (n,a,b) -> (n+1,a-1,b-1)
         Op2 = make_operator(zmat, smats)
         Opm = Op1 + Op2
