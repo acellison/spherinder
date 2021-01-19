@@ -1,6 +1,9 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+import itertools
+import multiprocessing as mp
 
 import os
 import pickle
@@ -13,7 +16,7 @@ config.internal_dtype = internal_dtype
 
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum
-from fileio import save_data, save_figure
+from fileio import save_data, save_figure, plotspy
 
 
 g_file_prefix = 'spherinder_inertial_waves'
@@ -193,14 +196,11 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
 
     plot_spy = False
     if plot_spy:
-        fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
-        plot_axes[0].spy(L)
-        plot_axes[1].spy(M)
-        plot_axes[0].set_title('L')
-        plot_axes[1].set_title('M')
+        fig, plot_axes = plotspy(L, M)
         filename = filename_prefix('figures') + f'-m={m}-Lmax={Lmax}-Nmax={Nmax}-spy.png'
         save_figure(filename, fig)
         plt.show()
+        assert False
 
     # Compute the eigenvalues and eigenvectors
     print('Eigenvalue problem, size {}'.format(np.shape(L)))
@@ -374,13 +374,98 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     save(filename, fig)
 
 
+def analyze_resolution():
+    m = 30
+    boundary_method = 'tau'
+
+    if m == 95:
+        n = m+61
+        Lmax_values = [14,18,22,26,30]
+        Nmax_values = [28,32,36,40,44,48,52,56,60]
+    else:
+        n = 60
+        Lmax_values = [10,14,18,22,26]
+        Nmax_values = [12,16,20,24,28,32,36,40,44,48,52,56,60]
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(4)]
+    evalue_targets = [2*greenspan.compute_eigenvalues(i[0], i[2])[i[1]-1] for i in mode_targets]
+
+    errors = np.zeros((len(evalue_targets),len(Lmax_values),len(Nmax_values)))
+    for i,Lmax in enumerate(Lmax_values):
+        for j,Nmax in enumerate(Nmax_values):
+            # Load the data
+            filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+            data = pickle.load(open(filename, 'rb'))
+            evalues, evectors = data['evalues'], data['evectors']
+
+            for k,evalue_target in enumerate(evalue_targets):
+                # Compute the eigenvalue error
+                index = np.argmin(abs(evalues - evalue_target))
+                evalue, evector = evalues[index], evectors[:,index]
+                error = evalue-evalue_target
+                errors[k,i,j] = abs(error)
+
+
+    prefix = filename_prefix('figures')
+
+    for k,evalue in enumerate(evalue_targets):
+        mode_prefix = prefix + f'-m={m}-evalue={evalue:1.2f}'
+
+        fig, ax = plt.subplots()
+
+        # Plotting niceties
+        markers = ['s','o','d','^','X','h','p','P','*','v','<','>']
+        for i,Lmax in enumerate(Lmax_values):
+            marker = markers[i]
+            ax.semilogy(Nmax_values, errors[k,i,:], f'-{marker}', label=f'Lmax={Lmax}')
+
+        ax.legend(loc='upper left')
+        ax.grid(True)
+        ax.set_title(f'Eigenvalue Error, m = {m}, λ = {evalue:1.4f}')
+        ax.set_xlabel('Nmax')
+        ax.set_ylabel('Error')
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        # Save the figure
+        filename = mode_prefix + f'-evalue_error.png'
+        save_figure(filename, fig)
+
+    plt.show()
+
+
+def _solve_helper(m, Lmax, Nmax):
+    boundary_method = 'tau'
+
+    print('Inertial Waves, m = {}'.format(m))
+    print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
+
+    # Skip if we already have it
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    if os.path.exists(filename):
+        print('  Already solved')
+        return
+
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method)
+
+
+def solve():
+    solve = True
+
+    m_values = [30]
+    Lmax_values = [10,14,18,22,26,30]
+    Nmax_values = [12,16,20,24,28,32,36,40,44,48,52,56,60]
+    configs = itertools.product(m_values,Lmax_values,Nmax_values)
+
+    pool = mp.Pool(mp.cpu_count()-1)
+    pool.starmap(_solve_helper, configs)
+
+
 def main():
-    solve = False
-    plot_evalues = True
-    plot_fields = True
+    solve = True
+    plot_evalues = False
+    plot_fields = False
 
     m = 95
-    Lmax, Nmax = 24, 32
+    Lmax, Nmax = 26, 28
     boundary_method = 'tau'
 
     print('Inertial Waves, m = {}'.format(m))
@@ -395,5 +480,7 @@ def main():
 
 
 if __name__=='__main__':
-    main()
+#    main()
+#    solve()
+    analyze_resolution()
 

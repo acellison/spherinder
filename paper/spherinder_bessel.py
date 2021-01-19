@@ -1,6 +1,10 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+from scipy.special import spherical_jn
+import itertools
+import multiprocessing as mp
 
 import os
 import pickle
@@ -12,7 +16,7 @@ config.internal_dtype = 'float64'
 
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum
-from fileio import save_data, save_figure
+from fileio import save_data, save_figure, plotspy
 
 g_file_prefix = 'spherinder_bessel'
 
@@ -35,10 +39,6 @@ def dispersion_zeros(ell,n,a=0,guess=None,imax=20,nk=10,eps=0.1):
         k -= dk
     
     return k
-
-
-def analytic_evalues(m, L, N):
-    return [dispersion_zeros(m+ell, N) for ell in range(L)]
 
 
 def matrices_tau(m, Lmax, Nmax, truncate=True):
@@ -145,8 +145,8 @@ def filename_prefix(directory='data'):
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
-def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data'):
-    return filename_prefix(directory) + '-evalues-m={}-Lmax={}-Nmax={}-{}.pckl'.format(m,Lmax,Nmax,boundary_method)
+def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data', ext='.pckl', prefix='evalues'):
+    return filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{ext}'
 
 
 def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
@@ -155,10 +155,9 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
 
     plot_spy = False
     if plot_spy:
-        fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
-        plot_axes[0].spy(L)
-        plot_axes[1].spy(M)
-        plt.show()
+        fig, plot_axes = plotspy(L, M)
+        filename = pickle_filename(m, Lmax, Nmax, boundary_method, directory='figures', ext='.png', prefix='spy')
+        save_figure(filename, fig)
 
     # Compute the eigenvalues and eigenvectors
     print('Eigenvalue problem, size {}'.format(np.shape(L)))
@@ -179,7 +178,7 @@ def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
     ncoeff = Lmax*Nmax
     fcoeff = vec[:ncoeff].real.reshape((Lmax,Nmax)).astype(dtype)
     tau = vec[ncoeff:]
-    print('Tau norm: {}'.format(np.linalg.norm(tau)))
+#    print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
     # Convert to grid space
     if boundary_method == 'galerkin':
@@ -230,14 +229,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     else:
         def save(fn, fig): pass
 
-    if m == 10:
-        evalue_target = 49.14**2
-    elif m == 30:
-        kappa_for_mode = {10: 75.42894, 16: 95.62605, 20: 108.79477, 24: 121.82663, 30: 141.20734}
-        mode_number = 24
-        evalue_target = kappa_for_mode[mode_number]**2
-    else:
-        evalue_target = 100
+    mode_number = 10
+    kappa_analytic = dispersion_zeros(m, mode_number+1)[mode_number]
+    evalue_target = kappa_analytic**2
+
     configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
     prefix = filename_prefix('figures')
 
@@ -264,7 +259,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     val, vec = evalues[index], evectors[:,index]
 
     kappa = np.sqrt(val.real)
-    print('Plotting eigenvector with eigenvalue {:1.4f}'.format(kappa))
+    print('Plotting eigenvector with eigenvalue {:1.8f}'.format(kappa))
+
+    evalue_error = (val.real-evalue_target)/evalue_target
+    print('Relative Eigenvalue error: {:e}'.format(evalue_error))
 
     # Construct the basis polynomials
     ns, neta = 1024, 1
@@ -275,31 +273,172 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     error_boundary = np.max(np.abs(f[0,-1]))
     print('Boundary error: {:1.3e}'.format(error_boundary))
 
-    fields = [f]
-    field_names = ['f']
-    plot_field_indices = [0]
+    f /= np.max(np.abs(f))
+    if np.abs(np.min(f)) > np.max(f):
+        f = -f
+    fig, ax = plt.subplots()
+    ax.plot(s, f.ravel())
+    ax.grid()
+    ax.set_xlabel('s')
+    ax.set_ylabel('f')
+    ax.set_title(r'$f$')
+    filename = prefix + '-evector-' + configstr + '.png'
+    save(filename, fig)
 
-    for i in range(len(plot_field_indices)):
-        field_index = plot_field_indices[i]
-        Fgrid = fields[field_index]
+    fanalytic = spherical_jn(m, kappa_analytic*s)
+    fanalytic /= np.max(np.abs(fanalytic))
+    ferror = f - fanalytic
 
+    print('Max eigenvector error: {}'.format(np.max(abs(ferror))))
+
+    fig, ax = plt.subplots()
+    ax.plot(s, ferror.ravel())
+    ax.grid(True)
+    ax.set_xlabel('s')
+    ax.set_ylabel('error')
+
+    # Plot the 2D field
+    ns, neta = 200, 201
+    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    f, tau = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
+
+    fig, ax = plt.subplots()
+    sph.plotfield(s, eta, f, fig, ax)
+
+
+def analyze_resolution():
+    m = 30
+    boundary_method = 'tau'
+
+    if m == 2:
+        modes = [4]
+        Lmax_values = [20,25,30,40,50]
+        Nmax_values = [5,10,15,20,25,30,40,50]
+    else:
+        modes = [10] #,16,20,24]
+        Lmax_values = [30,40,50,60,70]
+        Nmax_values = [20,25,30,40,50,60]
+    kappa_targets = dispersion_zeros(m, max(modes)+1)[modes]
+
+    # Compute the analytic modes
+    ns, neta = 1024, 1
+    s, eta = np.linspace(0,1,ns+1)[1:], np.array([0.])
+
+    analytic_modes = np.zeros((ns,len(kappa_targets)))
+    for k,kappa in enumerate(kappa_targets):
+        fanalytic = spherical_jn(m, kappa*s)
+        fanalytic /= np.max(np.abs(fanalytic))
+        analytic_modes[:,k] = fanalytic
+
+
+    errors_evalue = np.zeros((len(kappa_targets),len(Lmax_values),len(Nmax_values)))
+    errors_mode = np.zeros((len(kappa_targets),len(Lmax_values),len(Nmax_values)))
+    for i,Lmax in enumerate(Lmax_values):
+        for j,Nmax in enumerate(Nmax_values):
+            # Load the data
+            filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+            data = pickle.load(open(filename, 'rb'))
+            evalues, evectors = data['evalues'], data['evectors']
+
+            for k,kappa in enumerate(kappa_targets):
+                evalue_target = kappa**2
+
+                # Compute the eigenvalue error
+                index = np.argmin(abs(evalues - evalue_target))
+                evalue, evector = evalues[index], evectors[:,index]
+                error = abs(evalue-evalue_target)/evalue_target
+                errors_evalue[k,i,j] = error
+
+                # Compute the mode error
+                f, _ = expand_evectors(m, Lmax, Nmax, boundary_method, evector, s, eta)
+                f = f.reshape(ns)
+                f /= np.max(np.abs(f))
+                if abs(np.min(f)) > np.max(f):
+                    f = -f
+
+                error = np.max(np.abs(f-analytic_modes[:,k]))
+                errors_mode[k,i,j] = error
+
+
+    prefix = filename_prefix('figures')
+
+    for k,kappa in enumerate(kappa_targets):
+        mode_prefix = prefix + f'-m={m}-kappa={kappa:1.2f}'
+
+        # Plot the analytic mode
         fig, ax = plt.subplots()
-        ax.plot(s,f.ravel())
-        ax.grid()
+        ax.plot(s, analytic_modes[:,k])
+        ax.set_title(f'Bessel Eigenmode: m = {m}, κ = {kappa:1.2f}')
         ax.set_xlabel('s')
-        ax.set_ylabel('f')
-        ax.set_title(r'${}$'.format(field_names[field_index]))
-        filename = prefix + '-evector-' + configstr + '-' + '-' + field_names[field_index] + '.png'
-        save(filename, fig)
+        ax.grid(True)
+
+        # Save the analytic mode
+        filename = mode_prefix + '-analytic.png'
+        save_figure(filename, fig)
+
+        def plotfn(errors, which):
+            # Plot the error in eigenvalue
+            fig, ax = plt.subplots()
+
+            # Plotting niceties
+            markers = ['s','o','d','^','X','h','p','P','*','v','<','>']
+            for i,Lmax in enumerate(Lmax_values):
+                marker = markers[i]
+                ax.semilogy(Nmax_values, errors[k,i,:], f'-{marker}', label=f'Lmax={Lmax}')
+
+            loc = 'lower right' if boundary_method == 'tau' else 'upper right'
+            ax.legend(loc=loc)
+            ax.grid(True)
+            title = 'Eigenvalue' if which == 'evalue' else 'Mode'
+            bound = 'Galerkin' if boundary_method == 'galerkin' else 'Tau'
+            ax.set_title(f'{title} Error, m = {m}, κ = {kappa:1.2f}, {bound}')
+            ax.set_xlabel('Nmax')
+            ax.set_ylabel('Error')
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+            # Save the figure
+            filename = mode_prefix + f'-error-{which}-{boundary_method}.png'
+            save_figure(filename, fig)
+
+        plotfn(errors_evalue, 'evalue')
+        plotfn(errors_mode, 'mode')
+
+    plt.show()
+
+
+def _solve_helper(m, Lmax, Nmax, boundary_method):
+    print('Bessel Eigenproblem, m = {}, boundary method = {}'.format(m, boundary_method))
+    print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
+
+    # Skip if we already have it
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    if os.path.exists(filename):
+        print('  Already solved')
+        return
+
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method)
+
+
+def solve():
+    solve = True
+
+    m_values = [30]
+    Lmax_values = [20,30,40,50,60,70,80]
+    Nmax_values = [20,25,30,40,50,60]
+    boundary_methods = ['tau','galerkin']
+    configs = itertools.product(m_values,Lmax_values,Nmax_values,boundary_methods)
+
+    pool = mp.Pool(mp.cpu_count())
+    pool.starmap(_solve_helper, configs)
 
 
 def main():
     solve = True
-    plot_evalues = True
+    plot_evalues = False
     plot_fields = True
 
-    m = 30
-    Lmax, Nmax = 60, 60
+    m = 10
+    Lmax, Nmax = 50, 50
     boundary_method = 'galerkin'
 
     print('Bessel Eigenproblem, m = {}, boundary method = {}'.format(m, boundary_method))
@@ -314,5 +453,7 @@ def main():
 
 
 if __name__=='__main__':
-    main()
+#    main()
+#    solve()
+    analyze_resolution()
 
