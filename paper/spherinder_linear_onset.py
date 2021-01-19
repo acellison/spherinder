@@ -444,8 +444,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
     if error_only:
         return
 
-    # Get the grid space vector fields, real part only
-    vec = vec.real
+    # Get the grid space vector fields
     upcoeff = vec[:ncoeff] 
     umcoeff = vec[ncoeff:2*ncoeff] 
     uzcoeff = vec[2*ncoeff:3*ncoeff]
@@ -462,18 +461,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
     if 'T' in fields: which += ['T']
 
     # Convert to grid space
-    if bases is not None:
-        result = [bases[field].expand(coeffs[field].reshape((Lmax,Nmax))) for field in which]
-    else:
-        # Get domain properties
-        m, Lmax, Nmax, s, eta, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['s'], domain['eta'], domain['boundary_method']
-        dalpha = 1 if boundary_method == 'galerkin' else 0
-        alpha = {'up':1+dalpha, 'um':1+dalpha, 'uz':1+dalpha, 'p':g_alpha_p, 'T':g_alpha_T+1}
-        sigma = {'up':+1, 'um':-1, 'uz':0, 'p': 0, 'T': 0}
-        basis = lambda field: None if field == 'p' else boundary_method
-
-        # Expand the coefficients
-        result = [sph.expand_low_storage(coeffs[field].reshape((Lmax,Nmax)), m, s, eta, sigma=sigma[field], alpha=alpha[field], basis_kind=basis(field)) for field in which]
+    result = [bases[field].expand(coeffs[field].reshape((Lmax,Nmax))) for field in which]
 
     # Collect results
     get_field = lambda field: result[which.index(field)] if field in which else None
@@ -490,7 +478,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
 def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
 
-    fields = ['u','p']
+    fields = ['u','v','w','p']
     d = expand_evectors(Lmax, Nmax, evector, bases, domain, fields=fields, error_only=error_only)
     if error_only:
         return
@@ -500,7 +488,8 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, 
         ax = [ax]
     s, eta = domain['s'], domain['eta']
     for i, field in enumerate(fields):
-        sph.plotfield(s, eta, d[field].real, fig=fig, ax=ax[i], colorbar=False)
+        f = d[field].real if np.linalg.norm(d[field].real) >= np.linalg.norm(d[field].imag) else d[field].imag
+        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=True)
         ax[i].set_title(r'${}$'.format(field))
 
     fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
@@ -599,11 +588,11 @@ def rotation_configs():
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 20, 'Nmax': 20},
             {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 20},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 100, 'Nmax': 100},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 100, 'Nmax': 200},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 180},
-            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 200, 'Nmax': 200},
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 240},
+            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 120, 'Nmax': 200},
             {'Ekman': 10**-9, 'm': 300, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
             {'Ekman': 10**-10, 'm': 646, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
             {'Ekman': 10**-11, 'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
@@ -616,7 +605,7 @@ def main():
     plot_fields = True
     boundary_method = 'galerkin'
 #    nev = 'all'
-    nev = 10
+    nev = 40
 
     config_index = 8
     config = rotation_configs()[config_index]
