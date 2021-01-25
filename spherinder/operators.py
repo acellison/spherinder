@@ -321,19 +321,15 @@ class Boundary(Operator):
     def __call__(self, m, Lmax, Nmax, alpha, sigma, separate=False):
         A = self.A
         L = Lmax-1
-        even_conversions = [(A(+1)**(L//2-ell) @ A(-1)**ell)(Nmax,2*ell+alpha+1/2,m+sigma) for ell in range(L//2+1)]
-        odd_conversions = [(A(+1)**(((L-1)//2)-ell) @ A(-1)**ell)(Nmax,2*ell+1+alpha+1/2,m+sigma) for ell in range((L+1)//2)]
 
         bc = Jacobi.polynomials(Lmax,alpha,alpha,1.,dtype=self.internal)
 
-        Opeven = sparse.lil_matrix((Nmax+L//2,Lmax*Nmax), dtype=self.internal)
-        Opodd  = sparse.lil_matrix((Nmax+(L-1)//2,Lmax*Nmax), dtype=self.internal)
+        nrows = [Nmax+L//2, Nmax+(L-1)//2]
+        matrix = lambda shape: sparse.lil_matrix(shape, dtype=self.internal)
+        Opeven, Opodd = tuple(matrix((nr,Lmax*Nmax)) for nr in nrows)
         for ell in range(Lmax):
-            if ell % 2 == 0:
-                op, mat = even_conversions, Opeven
-            else:
-                op, mat = odd_conversions, Opodd
-            op = bc[ell] * op[ell//2]
+            op = bc[ell] * ((A(+1)**((L-ell)//2)) @ (A(-1)**(ell//2)))(Nmax, ell+alpha+1/2, m+sigma)
+            mat = [Opeven, Opodd][ell % 2]
             mat[:np.shape(op)[0],ell*Nmax:(ell+1)*Nmax] = op
 
         Opeven, Opodd = Opeven.astype(self.dtype), Opodd.astype(self.dtype)
@@ -638,7 +634,7 @@ class ScalarLaplacian(Operator):
 
     def __call__(self, m, Lmax, Nmax, alpha):
         kwargs = {'dtype':self.internal, 'internal':self.internal}
-        divergence, gradient = Divergence(**kwargs), Gradient(**kwargs),
+        divergence, gradient = Divergence(**kwargs), Gradient(**kwargs)
 
         gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha)
         gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1)
