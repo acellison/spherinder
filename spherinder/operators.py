@@ -9,13 +9,17 @@ from .config import internal_dtype, max_processes
 
 
 class Basis():
-    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, dtype='float64', internal='float128', lazy=True, parallel=False):
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, truncate=False, dtype='float64', internal='float128', lazy=True, parallel=False):
         self.s, self.eta = s, eta
         self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
         self.sigma, self.alpha, self.beta = sigma, alpha, beta
         self.dtype, self.internal = dtype, internal
         self.galerkin = galerkin
         self.parallel = parallel
+        self.truncate = truncate
+
+        if truncate:
+            _check_radial_degree(Lmax, Nmax)
 
         if not lazy:
             _construct_basis(self)
@@ -23,24 +27,32 @@ class Basis():
             self.sbasis, self.etabasis = None, None
             self._constructed = False
 
+    @property
+    def ncoeffs(self):
+        Lmax, Nmax = self.Lmax, self.Nmax
+        if self.truncate:
+            return np.sum([Nmax-ell//2 for ell in range(Lmax)])
+        else:
+            return Lmax*Nmax
 
     class _Constructor():
         """Helper object to parallelize basis construction"""
-        def __init__(self, Nmax, m, sigma, alpha, beta, t, onept, onemt, internal, dtype):
+        def __init__(self, Nmax, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype):
             self.Nmax, self.m, self.sigma, self.alpha, self.beta = Nmax, m, sigma, alpha, beta
-            self.internal, self.dtype = internal, dtype
+            self.truncate, self.internal, self.dtype = truncate, internal, dtype
             self.t, self.onept, self.onemt = t, onept, onemt
         def __call__(self, ell):
-            Nmax, m, sigma, alpha, beta = self.Nmax, self.m, self.sigma, self.alpha, self.beta
+            m, sigma, alpha, beta = self.m, self.sigma, self.alpha, self.beta
             internal, dtype = self.internal, self.dtype
             t, onept, onemt = self.t, self.onept, self.onemt
-            return ((onept * onemt**ell) * Jacobi.polynomials(Nmax,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
+            N = self.Nmax - (ell//2 if self.truncate else 0)
+            return ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
 
 
     def _construct_basis(self):
         m, Lmax, Nmax = self.m, self.Lmax, self.Nmax
         sigma, alpha, beta = self.sigma, self.alpha, self.beta
-        dtype, internal = self.dtype, self.internal
+        truncate, dtype, internal = self.truncate, self.dtype, self.internal
 
         s, eta = self.s.astype(internal), self.eta.astype(internal)
         t = 2*s**2 - 1
@@ -56,7 +68,7 @@ class Basis():
         # Construct the s basis
         onept = sscale * (1+t)**((m+sigma)/2)
         onemt = (1-t)**(1/2)
-        fun = Basis._Constructor(Nmax, m, sigma, alpha, beta, t, onept, onemt, internal, dtype)
+        fun = Basis._Constructor(Nmax, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype)
         if self.parallel:
             num_processes = min(mp.cpu_count(), max_processes)
             pool = mp.Pool(num_processes)
@@ -72,14 +84,21 @@ class Basis():
         if not self._constructed:
             self._construct_basis()
 
-        if np.shape(coeffs) != (self.Lmax, self.Nmax):
-            raise ValueError('Inconsistent shape')
+        if np.prod(np.shape(coeffs)) != self.ncoeffs:
+            raise ValueError('Inconsistent size')
 
+        # Flatten the coefficients
+        coeffs = coeffs.ravel()
+
+        # Expand
         f = np.zeros((len(self.eta), len(self.s)), dtype=coeffs.dtype)
         Peta = self.etabasis
+        index = 0
         for ell in range(self.Lmax):
+            N = self.Nmax - (ell//2 if self.truncate else 0)
             Ps = self.sbasis[ell]
-            f += Peta[:,ell][:,np.newaxis] * (coeffs[ell,:] @ Ps)
+            f += Peta[:,ell][:,np.newaxis] * (coeffs[index:index+N] @ Ps)
+            index += N
         return f
 
 
@@ -87,7 +106,8 @@ class Basis():
         ell, k = index[0], index[1]
         if ell >= self.Lmax:
             raise ValueError('ell index out of range')
-        if k >= self.Nmax:
+        N = self.Nmax - (ell//2 if self.truncate else 0)
+        if k >= N:
             raise ValueError('k index out of range')
 
         if not self._constructed:
@@ -166,16 +186,18 @@ def resize(mat, Lin, Nin, Lout, Nout):
     return result
 
 
-def triangular_truncate(mat, Lmax, Nmax):
-    if Nmax <= Lmax:
-        raise ValueError('Radial degree too small for triangular truncation')
-    Nout = lambda ell: Nmax-ell//2
+def triangular_truncate(mat, Lvar, Nvar, Leqn=None, Neqn=None):
+    if Leqn is None: Leqn = Lvar
+    if Neqn is None: Neqn = Nvar
 
-    # truncate columns
-    mat = resize(mat.T, Lmax, Nmax, Lmax, Nout).T
+    _check_radial_degree(Lvar, Nvar)
+    _check_radial_degree(Leqn, Neqn)
 
-    # truncate rows
-    mat = resize(mat, Lmax, Nmax, Lmax, Nout)
+    # truncate the equation space (output space)
+    mat = resize(mat, Leqn, Neqn, Leqn, lambda ell: Neqn-ell//2)
+
+    # truncate the variable space (input space)
+    mat = resize(mat.T, Lvar, Nvar, Lvar, lambda ell: Nvar-ell//2).T
 
     return mat
 
@@ -190,6 +212,11 @@ def remove_zero_rows(mat):
         if i > 0:
             rows[i:] -= 1
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
+
+
+def _check_radial_degree(Lmax, Nmax):
+    if Nmax < Lmax//2:
+        raise ValueError('Radial degree too small for triangular truncation')
 
 
 def _hstack(*args, **kwargs):
@@ -318,19 +345,25 @@ class Boundary(Operator):
         L = Lmax-1
         return (Nmax+L//2, L//2+alpha+1/2, m+sigma), (Nmax+(L-1)//2, (L+1)//2+alpha+1/2, m+sigma)
 
-    def __call__(self, m, Lmax, Nmax, alpha, sigma, separate=False):
+    def __call__(self, m, Lmax, Nmax, alpha, sigma, truncate=False, separate=False):
+        if truncate:
+            _check_radial_degree(Lmax, Nmax)
         A = self.A
         L = Lmax-1
 
         bc = Jacobi.polynomials(Lmax,alpha,alpha,1.,dtype=self.internal)
 
-        nrows = [Nmax+L//2, Nmax+(L-1)//2]
+        nrows = [Nmax, Nmax] if truncate else [Nmax+L//2, Nmax+(L-1)//2]
+        ncols = np.sum([Nmax-ell//2 for ell in range(Lmax)]) if truncate else Lmax*Nmax
         matrix = lambda shape: sparse.lil_matrix(shape, dtype=self.internal)
-        Opeven, Opodd = tuple(matrix((nr,Lmax*Nmax)) for nr in nrows)
+        Opeven, Opodd = tuple(matrix((nr,ncols)) for nr in nrows)
+        index = 0
         for ell in range(Lmax):
-            op = bc[ell] * ((A(+1)**((L-ell)//2)) @ (A(-1)**(ell//2)))(Nmax, ell+alpha+1/2, m+sigma)
+            N = Nmax - (ell//2 if truncate else 0)
+            op = bc[ell] * ((A(+1)**((L-ell)//2)) @ (A(-1)**(ell//2)))(N, ell+alpha+1/2, m+sigma)
             mat = [Opeven, Opodd][ell % 2]
-            mat[:np.shape(op)[0],ell*Nmax:(ell+1)*Nmax] = op
+            mat[:np.shape(op)[0],index:index+N] = op
+            index += N
 
         Opeven, Opodd = Opeven.astype(self.dtype), Opodd.astype(self.dtype)
         if separate:
