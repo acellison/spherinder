@@ -59,16 +59,19 @@ def expand_field(field, m, L_max, N_max, R_max, z, cos_theta):
     return f
 
 
-def plot_fields(fielddict, z, cos_theta, colorbar=True):
+def plot_fields(fielddict, z, cos_theta, colorbar=True, fig=None, ax=None, cmap=None):
     shading = 'gouraud'  # 'gouraud' interpolates but is slower than 'nearest'
     r = np.sqrt((z+1)/2)
     r, cos_theta = r[np.newaxis,:], cos_theta[:,np.newaxis]
     sin_theta = np.sqrt(1-cos_theta**2)
     x, z = r*sin_theta, r*cos_theta
     for name, field in fielddict.items():
-        fig, ax = plt.subplots(1,1,figsize=(4.25,6))
+        if fig is None or ax is None:
+            fig, ax = plt.subplots(1,1,figsize=(4.25,6))
 
-        cmap = copy.copy(plt.get_cmap('RdBu'))
+        if cmap is None:
+            cmap = plt.get_cmap('RdBu')
+        cmap = copy.copy(cmap)
         cmap.set_bad(color='grey', alpha=.5)
         if shading == 'gouraud':
             # Shade via interpolation.  Can handle non-monotonic input grids
@@ -86,8 +89,6 @@ def plot_fields(fielddict, z, cos_theta, colorbar=True):
         ax.set_ylabel('z')
         ax.set_title(name)
         ax.set_aspect('equal')
-
-        fig.show()
 
 
 def checkdir(filename):

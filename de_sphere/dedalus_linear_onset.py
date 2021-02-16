@@ -53,9 +53,13 @@ def build_matrices_ell(B, Ekman, Prandtl, Rayleigh, ell_range, alpha_BC, boundar
     args = [(ell, *args) for ell in ell_range]
 
     # Build matrices in parallel
-    num_processes = min(mp.cpu_count(), 32)
-    pool = mp.Pool(num_processes)
-    result = pool.starmap(build_matrices_ell_fun, args)
+    parallel = False
+    if parallel:
+        num_processes = min(mp.cpu_count(), 32)
+        pool = mp.Pool(num_processes)
+        result = pool.starmap(build_matrices_ell_fun, args)
+    else:
+        result = [build_matrices_ell_fun(*a) for a in args]
     M, L, E = zip(*result)
 
     return M, L, E
@@ -247,8 +251,116 @@ def rotation_configs():
             {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1200, 'Nmax': 1200}
             ]
 
+def _solve_helper(config_index):
+    boundary_condition = 'no-slip'
+    thermal_forcing_factor = 1
+    nev = 10
 
-def compute_eigensolutions():
+    config = rotation_configs()[config_index]
+    m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
+    if L_max < m:
+        raise ValueError('No angular resolution: L_max (={}) is too small'.format(L_max))
+    Ekman, Prandtl, Rayleigh = config['Ekman'], 1, config['Rayleigh']
+
+    B, domain = build_ball(m, L_max, N_max)
+
+    # Skip if we already have it
+    filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    if os.path.exists(filename):
+        print('  Already solved')
+        return
+
+    solve_eigenproblem(B, m, domain, config, nev=nev, boundary_condition=boundary_condition,
+                       thermal_forcing_factor=thermal_forcing_factor)
+
+
+def solve():
+    indices = range(8)
+
+    pool = mp.Pool(mp.cpu_count()-1)
+    pool.map(_solve_helper, indices)
+
+
+def plot_modes():
+    nrows, ncols = 2, 4
+    configs = rotation_configs()[:nrows*ncols]
+    boundary_condition = 'no-slip'
+    plot_pressure = True
+
+    fig, plot_axes = plt.subplots(nrows,ncols,figsize=(ncols*3,nrows*5.25))
+
+    for index, config in enumerate(configs):
+        # Extract the domain parameters
+        m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
+        B, domain = build_ball(m, L_max, N_max)
+
+        # Get reduced nondimensional parameters from config
+        Ekman, Rayleigh, omega = config['Ekman'], config['Rayleigh'], config['omega']
+
+        # Rescale parameters
+        omega /= Ekman**(2/3)
+        Prandtl = 1
+        thermal_forcing_factor = 1
+        Rayleigh = thermal_forcing_factor * Rayleigh / Ekman**(1/3)
+
+        # Load the data
+        filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+        data = pickle.load(open(filename, 'rb'))
+
+        # Extract configuration parameters
+        evalues, evectors = data['evalues'], data['evectors']
+        evalue, evector = evalues[-1], evectors[:,-1]
+        print(f'm = {m}, Ekamn = {Ekman:1.3e}, Critical Eigenvalue: {evalue}')
+
+        ntau = lambda ell: 1 if ell == 0 else 4
+        state_vector = StateVector(B, 'mlr', [('u',1),('p',0),('T',0)], ntau=ntau, m_min=m, m_max=m)
+
+        fielddict = {}
+        maxreal, maximag = np.max(np.abs(evector.real)), np.max(np.abs(evector.imag))
+        which = 'real' if maxreal > maximag else 'imag'
+        evector = 2 * (evector.real if which=='real' else evector.imag)
+
+        nr, ntheta = 1024, 1025
+        z, _ = ball128.quadrature(nr,a=0.0)
+        cos_theta, _ = sphere128.quadrature(ntheta)
+
+        # Collect fields, converting to grid space
+        name = 'p' if plot_pressure else 'T'
+        coeffs = make_tensor_coeffs(m, B.L_max, B.N_max, B.R_max, rank=0)
+        state_vector.unpack(evector, {name: coeffs})
+        field = expand_field(coeffs, m, B.L_max, B.N_max, B.R_max, z, cos_theta)
+
+        # Orient them all the same way
+        if abs(np.min(field)) > np.max(field):
+            field = -field
+
+        # Plot
+        row, col = index//ncols, index%ncols
+        ax = plot_axes[row][col]
+        plot_fields({name: field}, z, cos_theta, colorbar=False, fig=fig, ax=ax, cmap=plt.get_cmap('RdBu_r'))
+
+        if col != 0:
+            ax.set_ylabel(None)
+            ax.set_yticklabels([])
+        if row != nrows-1:
+            ax.set_xlabel(None)
+            ax.set_xticklabels([])
+
+        logek = np.log10(Ekman)
+        ax.set_title('E = $10^{' + f'{logek:1.1f}' + '}$')
+
+    fig.set_tight_layout(True)
+
+    # Save the figure
+    prefix = make_filename_prefix('figures')
+    field = 'pressure' if plot_pressure else 'temperature'
+    plot_filename = prefix + f'-critical_modes-{field}.png'
+    save_figure(plot_filename, fig)
+
+    plt.show()
+
+
+def main():
     solve = False
     plot = True
 
@@ -257,7 +369,7 @@ def compute_eigensolutions():
     thermal_forcing_factor = 1
 
     configs = rotation_configs()
-    configs = [configs[4]]
+    configs = configs[:8]
     for config in configs:
         # Extract the domain parameters
         m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
@@ -279,4 +391,7 @@ def compute_eigensolutions():
 
 
 if __name__=='__main__':
-    compute_eigensolutions()
+#    main()
+#    solve()
+    plot_modes()
+
