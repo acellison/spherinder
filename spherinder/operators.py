@@ -22,7 +22,7 @@ class Basis():
             _check_radial_degree(Lmax, Nmax)
 
         if not lazy:
-            _construct_basis(self)
+            self._construct_basis()
         else:
             self.sbasis, self.etabasis = None, None
             self._constructed = False
