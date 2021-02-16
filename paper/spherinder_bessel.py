@@ -26,7 +26,7 @@ def dispersion_zeros(ell,n,a=0,guess=None,imax=20,nk=10,eps=0.1):
     def F(k,deriv=False): 
         return j(ell,k,derivative=deriv) - a*j(ell+2,k,derivative=deriv)
     
-    if guess == None:    
+    if guess == None:
         kmax = np.pi*(n+ell/2 + eps)
         k = np.linspace(0,kmax,int(kmax*nk))
         S = np.sign(F(k))
@@ -41,60 +41,30 @@ def dispersion_zeros(ell,n,a=0,guess=None,imax=20,nk=10,eps=0.1):
     return k
 
 
-def matrices_tau(m, Lmax, Nmax, truncate=True):
+def matrices_tau(m, Lmax, Nmax, truncate):
     """Construct matrices for Bessel's eigenproblem, Lap(f) + λ f = 0
     """
-    alpha = 0
-    alpha_bc = alpha+1
-    alpha_bc_n = alpha+1
-    alpha_bc_trunc = alpha+2
-    trunc_kind = 'beta'  # one of [alpha, beta]
+    alpha_bc = 0
 
     # Differentiation matrices
-    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=alpha, sigma=0, truncate=truncate)
-    L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=alpha)
+    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0, truncate=True)
+    L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
+    L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
 
-    # Resize matrices as needed
+    # Tau polynomials
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
+    row = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0, truncate=truncate)
+
     if truncate:
-        L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
-    else:
-        n_for_ell = lambda ell: Nmax+1 if ell < Lmax-2 else Nmax
-        M = sph.resize(M, Lmax, Nmax+1, Lmax, n_for_ell)
-        L = sph.resize(L, Lmax, Nmax+1, Lmax, n_for_ell)
+        M = sph.triangular_truncate(M, Lmax, Nmax)
+        L = sph.triangular_truncate(L, Lmax, Nmax)
+        Conv = sph.triangular_truncate(Conv, Lmax, Nmax)
 
-    # Boundary condition in eta direction
-    Conv = sph.convert_alpha(alpha+2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=truncate)
-    if not truncate:
-        Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
-    col1 = Conv[:,-2*Nmax:]
-
-    # Boundary condition in s direction
-    Conv = sph.convert_alpha(alpha+2-alpha_bc_n, m, Lmax, Nmax, alpha=alpha_bc_n, sigma=0, truncate=truncate)
-    if not truncate:
-        Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
-    col2 = Conv[:,Nmax-1:-2*Nmax:Nmax]
-
+    Nlengths = [Nmax-(ell//2 if truncate else 0) for ell in range(Lmax)]
+    Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
+    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
+    col2 = Conv[:,Noffsets[-2]:]
     col = sparse.hstack([col1,col2])
-
-    # Additional tau columns for non-truncation
-    if not truncate:
-        if trunc_kind == 'alpha':
-            Conv = sph.convert_alpha(alpha+2-alpha_bc_trunc, m, Lmax, Nmax, alpha=alpha_bc_trunc, sigma=0, truncate=truncate)
-            Conv = sph.resize(Conv, Lmax, Nmax+1, Lmax, n_for_ell)
-            col3 = Conv[:,Nmax-2:-2*Nmax:Nmax]
-        elif trunc_kind == 'beta':
-            zmat = sparse.eye(Lmax)
-            A = Jacobi.operator('A')
-            smats = [(A(+1)**(alpha+2-alpha_bc_trunc))(Nmax+1,ell+alpha_bc_trunc+1/2,m) for ell in range(Lmax)]
-            op = sph.make_operator(zmat, smats)
-            op = sph.resize(op, Lmax, Nmax+1, Lmax, n_for_ell)
-            col3 = op[:,Nmax:-2*(Nmax+1):Nmax+1]
-        else:
-            raise ValueError('Unrecognized boundary kind')
-        col = sparse.hstack([col,col3])
-
-    # Boundary condition
-    row = sph.operator('boundary')(m, Lmax, Nmax, alpha=alpha, sigma=0)
 
     # Create the boundary condition rows and tau columns
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
@@ -104,18 +74,16 @@ def matrices_tau(m, Lmax, Nmax, truncate=True):
     M = sparse.bmat([[    M, 0*col],
                      [0*row, corner]], format='csr')
 
-    M, L = M.tocsr(), L.tocsr()
     return M, L
 
 
-def matrices_galerkin(m, Lmax, Nmax, truncate=True):
+def matrices_galerkin(m, Lmax, Nmax, truncate):
     alpha_bc = 1
     Lout, Nout = Lmax+2, Nmax+1
 
-    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, truncate=truncate)
+    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, truncate=True)
     L = sph.operator('laplacian')(m, Lout, Nout, alpha=0)
-    if truncate:
-        L = sph.resize(L, Lout, Nout+1, Lout, Nout)
+    L = sph.resize(L, Lout, Nout+1, Lout, Nout)
 
     # Multiplication by 1-r**2 lowers alpha by 1
     Bound = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
@@ -123,8 +91,17 @@ def matrices_galerkin(m, Lmax, Nmax, truncate=True):
     M = M @ Bound
     L = L @ Bound
 
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=truncate)
-    col1, col2 = Conv[:,Nout-1:-2*Nout:Nout], Conv[:,-2*Nout:]
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
+
+    if truncate:
+        M = sph.triangular_truncate(M, Lmax, Nmax, Lout, Nout)
+        L = sph.triangular_truncate(L, Lmax, Nmax, Lout, Nout)
+        Conv = sph.triangular_truncate(Conv, Lout, Nout, Lout, Nout)
+
+    Nlengths = [Nout-(ell//2 if truncate else 0) for ell in range(Lout)]
+    Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
+    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)])
+    col2 = Conv[:,Noffsets[-2]:]
 
     L = sparse.hstack([L,  col1,  col2])
     M = sparse.hstack([M,0*col1,0*col2])
@@ -132,9 +109,9 @@ def matrices_galerkin(m, Lmax, Nmax, truncate=True):
     return M, L
 
 
-def matrices(m, Lmax, Nmax, boundary_method):
+def matrices(m, Lmax, Nmax, boundary_method, truncate):
     if boundary_method in ['tau', 'galerkin']:
-        return eval('matrices_' + boundary_method)(m, Lmax, Nmax)
+        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, truncate)
     else:
         raise ValueError('Unsupported boundary method')
 
@@ -145,18 +122,19 @@ def filename_prefix(directory='data'):
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
-def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data', ext='.pckl', prefix='evalues'):
-    return filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{ext}'
+def pickle_filename(m, Lmax, Nmax, boundary_method, truncate, directory='data', ext='.pckl', prefix='evalues'):
+    truncstr = '-truncated' if truncate else ''
+    return filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{truncstr}{ext}'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate):
     # Construct the system
-    M, L = matrices(m, Lmax, Nmax, boundary_method)
+    M, L = matrices(m, Lmax, Nmax, boundary_method, truncate)
 
     plot_spy = False
     if plot_spy:
         fig, plot_axes = plotspy(L, M)
-        filename = pickle_filename(m, Lmax, Nmax, boundary_method, directory='figures', ext='.png', prefix='spy')
+        filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate, directory='figures', ext='.png', prefix='spy')
         save_figure(filename, fig)
 
     # Compute the eigenvalues and eigenvectors
@@ -165,37 +143,37 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method):
 
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
-            'boundary_method': boundary_method,
+            'boundary_method': boundary_method, 'truncated': truncate,
             'evalues': evalues, 'evectors': evectors}
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
     save_data(filename, data)
 
 
-def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta):
-    dtype = 'float64'
-
-    # Get the grid space vector fields
-    ncoeff = Lmax*Nmax
-    fcoeff = vec[:ncoeff].real.reshape((Lmax,Nmax)).astype(dtype)
-    tau = vec[ncoeff:]
-#    print('Tau norm: {}'.format(np.linalg.norm(tau)))
-
-    # Convert to grid space
+def expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta, truncate):
     if boundary_method == 'galerkin':
-        Conv = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
-        Lmax = Lmax+2
-        Nmax = Nmax+1
-        fcoeff = (Conv @ fcoeff.ravel()).reshape(Lmax, Nmax)
+        alpha, galerkin = 1, True
+    else:
+        alpha, galerkin = 0, False
 
-    basis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=0, galerkin=False, dtype=dtype)
+    # Compute the grid space field
+    basis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=alpha, galerkin=galerkin, truncate=truncate)
+
+    ncoeff = basis.ncoeffs
+    fcoeff = vec[:ncoeff].real
+    tau = vec[ncoeff:]
     f = basis.expand(fcoeff)
 
     return f, tau
 
 
-def check_boundary(m, Lmax, Nmax, evalues, evectors, plot=False):
-    bc = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0)
-    result = bc @ evectors[:Nmax*Lmax,:]
+def check_boundary(m, Lmax, Nmax, truncate, evalues, evectors, plot=False):
+    s, eta = np.linspace(0,1,10), np.array([1.])
+    basis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0, galerkin=False, truncate=truncate)
+    ncoeff = basis.ncoeffs
+
+    bc = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0, truncate=truncate)
+
+    result = bc @ evectors[:ncoeff,:]
     error = np.linalg.norm(result, axis=0)
     index = np.argmax(error)
 
@@ -209,11 +187,11 @@ def check_boundary(m, Lmax, Nmax, evalues, evectors, plot=False):
     print('Worst case coefficient error, index {}, evalue {}, L2 error {:1.4e}'.format(index, evalues[index], error[index]))
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_fields):
     save_plots = False
 
     # Load the data
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -229,11 +207,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     else:
         def save(fn, fig): pass
 
-    mode_number = 10
-    kappa_analytic = dispersion_zeros(m, mode_number+1)[mode_number]
-    evalue_target = kappa_analytic**2
-
-    configstr = 'm={}-Lmax={}-Nmax={}-{}'.format(m,Lmax,Nmax,boundary_method)
+    truncstr = '-truncated' if truncate else ''
+    configstr = 'm={}-Lmax={}-Nmax={}-{}{}'.format(m,Lmax,Nmax,boundary_method,truncstr)
     prefix = filename_prefix('figures')
 
     ntotal = len(evalues)
@@ -241,7 +216,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     print(f'Number of complex eigenvalues: {nimag}/{ntotal}')
 
     if boundary_method == 'tau':
-        check_boundary(m, Lmax, Nmax, evalues, evectors)
+        check_boundary(m, Lmax, Nmax, truncate, evalues, evectors)
 
     # Plot the eigenvalues
     if plot_evalues:
@@ -251,69 +226,17 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         filename = prefix + '-evalues-' + configstr + '.png'
         save(filename, fig)
 
-    if not plot_fields:
-        return
-
-    # Get the target eigenpair
-    index = np.argmin(abs(evalues - evalue_target))
-    val, vec = evalues[index], evectors[:,index]
-
-    kappa = np.sqrt(val.real)
-    print('Plotting eigenvector with eigenvalue {:1.8f}'.format(kappa))
-
-    evalue_error = (val.real-evalue_target)/evalue_target
-    print('Relative Eigenvalue error: {:e}'.format(evalue_error))
-
-    # Construct the basis polynomials
-    ns, neta = 1024, 1
-    s, eta = np.linspace(0,1,ns+1)[1:], np.array([0.])
-    f, tau = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
-
-    # Spherical radial velocity component
-    error_boundary = np.max(np.abs(f[0,-1]))
-    print('Boundary error: {:1.3e}'.format(error_boundary))
-
-    f /= np.max(np.abs(f))
-    if np.abs(np.min(f)) > np.max(f):
-        f = -f
-    fig, ax = plt.subplots()
-    ax.plot(s, f.ravel())
-    ax.grid()
-    ax.set_xlabel('s')
-    ax.set_ylabel('f')
-    ax.set_title(r'$f$')
-    filename = prefix + '-evector-' + configstr + '.png'
-    save(filename, fig)
-
-    fanalytic = spherical_jn(m, kappa_analytic*s)
-    fanalytic /= np.max(np.abs(fanalytic))
-    ferror = f - fanalytic
-
-    print('Max eigenvector error: {}'.format(np.max(abs(ferror))))
-
-    fig, ax = plt.subplots()
-    ax.plot(s, ferror.ravel())
-    ax.grid(True)
-    ax.set_xlabel('s')
-    ax.set_ylabel('error')
-
-    # Plot the 2D field
-    ns, neta = 200, 201
-    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    f, tau = expand_evectors(m, Lmax, Nmax, boundary_method, vec, s, eta)
-
-    fig, ax = plt.subplots()
-    sph.plotfield(s, eta, f, fig, ax)
-
 
 def analyze_resolution():
-    m = 30
+    m = 2
     boundary_method = 'tau'
+    truncate = True
 
     if m == 2:
         modes = [4]
-        Lmax_values = [20,25,30,40,50]
-        Nmax_values = [5,10,15,20,25,30,40,50]
+#        Lmax_values = [20,25,30,40,50]
+        Lmax_values = [30]
+        Nmax_values = [20,25,30,40,50,60,70,80]
     else:
         modes = [10] #,16,20,24]
         Lmax_values = [30,40,50,60,70]
@@ -330,15 +253,23 @@ def analyze_resolution():
         fanalytic /= np.max(np.abs(fanalytic))
         analytic_modes[:,k] = fanalytic
 
-
     errors_evalue = np.zeros((len(kappa_targets),len(Lmax_values),len(Nmax_values)))
     errors_mode = np.zeros((len(kappa_targets),len(Lmax_values),len(Nmax_values)))
     for i,Lmax in enumerate(Lmax_values):
         for j,Nmax in enumerate(Nmax_values):
+            # If we are truncating we may have to throw away some cases
+            if truncate and Nmax < Lmax//2:
+                errors_evalue[:,i,j] = np.nan
+                errors_mode[:,i,j] = np.nan
+                continue
+
             # Load the data
-            filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+            filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
             data = pickle.load(open(filename, 'rb'))
             evalues, evectors = data['evalues'], data['evectors']
+
+            fig, ax = plot_spectrum(evalues)
+            ax.set_title(f'Lmax = {Lmax}, Nmax = {Nmax}')
 
             for k,kappa in enumerate(kappa_targets):
                 evalue_target = kappa**2
@@ -350,7 +281,7 @@ def analyze_resolution():
                 errors_evalue[k,i,j] = error
 
                 # Compute the mode error
-                f, _ = expand_evectors(m, Lmax, Nmax, boundary_method, evector, s, eta)
+                f, _ = expand_evectors(m, Lmax, Nmax, boundary_method, evector, s, eta, truncate)
                 f = f.reshape(ns)
                 f /= np.max(np.abs(f))
                 if abs(np.min(f)) > np.max(f):
@@ -358,7 +289,6 @@ def analyze_resolution():
 
                 error = np.max(np.abs(f-analytic_modes[:,k]))
                 errors_mode[k,i,j] = error
-
 
     prefix = filename_prefix('figures')
 
@@ -397,8 +327,9 @@ def analyze_resolution():
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
             # Save the figure
-            filename = mode_prefix + f'-error-{which}-{boundary_method}.png'
-            save_figure(filename, fig)
+            truncstr = '-truncated' if truncate else ''
+            filename = mode_prefix + f'-error-{which}-{boundary_method}{truncstr}.png'
+#            save_figure(filename, fig)
 
         plotfn(errors_evalue, 'evalue')
         plotfn(errors_mode, 'mode')
@@ -406,54 +337,60 @@ def analyze_resolution():
     plt.show()
 
 
-def _solve_helper(m, Lmax, Nmax, boundary_method):
-    print('Bessel Eigenproblem, m = {}, boundary method = {}'.format(m, boundary_method))
+def _solve_helper(m, Lmax, Nmax, boundary_method, truncate, force=False):
+    print('Bessel Eigenproblem, m = {}, boundary method = {}, truncate = {}'.format(m, boundary_method, truncate))
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
 
     # Skip if we already have it
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
-    if os.path.exists(filename):
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
+    if not force and os.path.exists(filename):
         print('  Already solved')
         return
 
-    solve_eigenproblem(m, Lmax, Nmax, boundary_method)
+    if Nmax <= Lmax//2:
+        print('  Radial degree to small.  Skipping')
+        return
+
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate)
 
 
 def solve():
-    solve = True
+    force = True
 
-    m_values = [30]
-    Lmax_values = [20,30,40,50,60,70,80]
-    Nmax_values = [20,25,30,40,50,60]
-    boundary_methods = ['tau','galerkin']
-    configs = itertools.product(m_values,Lmax_values,Nmax_values,boundary_methods)
+    m_values = [2]
+    Lmax_values = [30]
+    Nmax_values = [20,25,30,40,50,60,70,80]
+    boundary_methods = ['tau']
+    truncate = [True]
+    configs = itertools.product(m_values,Lmax_values,Nmax_values,boundary_methods,truncate,[force])
 
-    pool = mp.Pool(mp.cpu_count())
+    pool = mp.Pool(mp.cpu_count()-2)
     pool.starmap(_solve_helper, configs)
 
 
 def main():
-    solve = True
-    plot_evalues = False
+    solve = False
+    plot_evalues = True
     plot_fields = True
 
-    m = 10
-    Lmax, Nmax = 50, 50
+    m = 30
+    Lmax, Nmax = 40, 40
     boundary_method = 'galerkin'
+    truncate = True
 
-    print('Bessel Eigenproblem, m = {}, boundary method = {}'.format(m, boundary_method))
+    print('Bessel Eigenproblem, m = {}, boundary method = {}, truncate = {}'.format(m, boundary_method, truncate))
     print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields)
+        plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_fields)
         plt.show()
 
 
 if __name__=='__main__':
-#    main()
+    main()
 #    solve()
-    analyze_resolution()
+#    analyze_resolution()
 

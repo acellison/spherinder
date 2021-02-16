@@ -15,9 +15,18 @@ g_alpha_T = 0
 g_file_prefix = 'spherinder_linear_onset'
 
 
-def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
+def coeff_sizes(Lmax, Nmax, truncate):
+    lengths = [Nmax-(ell//2 if truncate else 0) for ell in range(Lmax)]
+    offsets = np.append(0, np.cumsum(lengths)[:-1])
+    return lengths, offsets
+
+
+def matrices_tau(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
     """Construct matrices for X = [u(+), u(-), u(z), p, T]
     """
+    if truncate:
+        raise ValueError('Truncation not implemented for tau matrices')
+
     alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
     ncoeff = Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
@@ -184,7 +193,7 @@ def matrices_tau(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     return M, L
 
 
-def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
+def matrices_galerkin(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
     """Construct matrices for X = [u(+), u(-), u(z), p, T]
     """
     alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
@@ -296,6 +305,13 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     pmats = [L30, L31, L32, L33, L34]
     Tmats = [L40, L41, L42, L43, L44]
 
+    # Truncate the matrices
+    nfields = 5
+    if truncate:
+        for mats in [Mmats, upmats, ummats, uzmats, pmats, Tmats]:
+            for i in range(nfields):
+                mats[i] = sph.triangular_truncate(mats[i], Lmax, Nmax, Lout, Nout)
+
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
     L = sparse.bmat([upmats, ummats, uzmats, pmats, Tmats], format=sparse_format)
@@ -316,10 +332,15 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
         Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, truncate=True)
         TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lout, Nout, alpha=alpha_bc_T, sigma=0, truncate=True)
 
-        taup1, taum1, tauz1, taus1, tauT1 = Taup[:,Nout-1:-2*Nout:Nout], Taum[:,Nout-1:-2*Nout:Nout], Tauz[:,Nout-1:-2*Nout:Nout], \
-                                            Taus[:,Nout-1:-2*Nout:Nout], TauT[:,Nout-1:-2*Nout:Nout]
-        taup2, taum2, tauz2, taus2, tauT2 = Taup[:,-2*Nout:], Taum[:,-2*Nout:], Tauz[:,-2*Nout:], \
-                                            Taus[:,-2*Nout:], TauT[:,-2*Nout:]
+        Ts = [Taup, Taum, Tauz, Taus, TauT]
+        if truncate:
+            for i in range(nfields):
+                Ts[i] = sph.triangular_truncate(Ts[i], Lout, Nout, Lout, Nout)
+
+        Nlengths, Noffsets = coeff_sizes(Lout, Nout, truncate)
+
+        taup1, taum1, tauz1, taus1, tauT1 = tuple(hstack([T[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)]) for T in Ts)
+        taup2, taum2, tauz2, taus2, tauT2 = tuple(T[:,Noffsets[-2]:] for T in Ts)
  
         col = make_tau_column(hstack([taup1,taup2]), hstack([taum1,taum2]), hstack([tauz1,tauz2]), \
                               hstack([taus1,taus2]), hstack([tauT1,tauT2]))
@@ -333,9 +354,9 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     return M, L
 
 
-def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
+def matrices(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh):
     if boundary_method in ['tau', 'galerkin']:
-        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh)
+        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh)
     else:
         raise ValueError('Unsupported boundary method')
 
@@ -374,16 +395,17 @@ def make_filename_prefix(directory='data'):
     return os.path.join(abspath, g_file_prefix)
 
 
-def output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory, ext, prefix='evalues'):
-    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}' + ext
+def output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory, ext, prefix='evalues'):
+    truncstr = '-truncated' if truncate else ''
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-Prandtl={Prandtl}-Rayleigh={Rayleigh:1.4e}-{boundary_method}{truncstr}' + ext
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev='all'):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev='all'):
     # Construct the system
     print('Constructing matrix system...')
-    M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
+    M, L = matrices(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh)
 
-    permute = True
+    permute = not truncate  # Fixme: implement permutation for triangular truncation
     enable_permutation = permute and boundary_method == 'galerkin'
     if enable_permutation:
         print('Reordering variables and equations...')
@@ -412,13 +434,14 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
             'boundary_method': boundary_method,
+            'truncated': truncate,
             'evalues': evalues, 'evectors': evectors,
             'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
     save_data(filename, data)
 
 
-def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
+def create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta):
     if boundary_method == 'galerkin':
         galerkin = True
         dalpha = 1
@@ -426,30 +449,28 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
         galerkin = False
         dalpha = 0
 
-    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
-    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
-    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
-    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_p, galerkin=False)
-    Tbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_T+dalpha, galerkin=galerkin)
+    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_p, galerkin=False, truncate=truncate)
+    Tbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_T+dalpha, galerkin=galerkin, truncate=truncate)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis, 'T':Tbasis}
 
     return bases
 
 
-def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=False):
-    ncoeff = Lmax*Nmax
+def expand_evectors(vec, bases, fields='all', error_only=False):
+    ncoeffs = [b.ncoeffs for b in [bases['up'], bases['um'], bases['uz'], bases['p'], bases['T']]]
+    offsets = np.append(0, np.cumsum(ncoeffs))
 
-    tau = vec[5*ncoeff:]
+    tau = vec[offsets[-1]:]
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
     if error_only:
         return
 
     # Get the grid space vector fields
-    upcoeff = vec[:ncoeff] 
-    umcoeff = vec[ncoeff:2*ncoeff] 
-    uzcoeff = vec[2*ncoeff:3*ncoeff]
-    pcoeff = vec[3*ncoeff:4*ncoeff]
-    Tcoeff = vec[4*ncoeff:5*ncoeff]
+    nfields = 5
+    upcoeff, umcoeff, uzcoeff, pcoeff, Tcoeff = tuple(vec[offsets[i]:offsets[i+1]] for i in range(nfields))
     coeffs = {'up':upcoeff, 'um':umcoeff, 'uz':uzcoeff, 'p':pcoeff, 'T':Tcoeff}
     if fields == 'all':
         fields = ['u','v','w','p','T']
@@ -461,7 +482,7 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
     if 'T' in fields: which += ['T']
 
     # Convert to grid space
-    result = [bases[field].expand(coeffs[field].reshape((Lmax,Nmax))) for field in which]
+    result = [bases[field].expand(coeffs[field]) for field in which]
 
     # Collect results
     get_field = lambda field: result[which.index(field)] if field in which else None
@@ -475,68 +496,64 @@ def expand_evectors(Lmax, Nmax, vec, bases, domain, fields='all', error_only=Fal
     return {'u':u, 'v':v, 'w':w, 'p':p, 'T':T}
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=False):
+def plot_spectrum_callback(index, evalues, evectors, bases, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
 
-    fields = ['u','v','w','p']
-    d = expand_evectors(Lmax, Nmax, evector, bases, domain, fields=fields, error_only=error_only)
+#    fields = ['u','v','w','p']
+    fields = ['p']
+    d = expand_evectors(evector, bases, fields=fields, error_only=error_only)
     if error_only:
         return
 
     fig, ax = plt.subplots(1,len(fields),figsize=(0.5+3*len(fields),4.5))
     if len(fields) == 1:
         ax = [ax]
-    s, eta = domain['s'], domain['eta']
+    s, eta = bases['up'].s, bases['up'].eta
     for i, field in enumerate(fields):
         f = d[field].real if np.linalg.norm(d[field].real) >= np.linalg.norm(d[field].imag) else d[field].imag
-        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=True)
+        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=len(fields)>1)
         ax[i].set_title(r'${}$'.format(field))
 
     fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
     fig.set_tight_layout(True)
 
-#    m, Lmax, Nmax, boundary_method = domain['m'], domain['Lmax'], domain['Nmax'], domain['boundary_method']
-#    Ekman, Prandtl, Rayleigh = domain['Ekman'], domain['Prandtl'], domain['Rayleigh']
-#    prefix = 'fields=' + str(fields).replace('[','').replace(']','').replace(' ','').replace('\'\'','_').replace('\'','')
-#    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix=prefix)
-#    save_figure(plot_filename, fig, dpi=1200)
-
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
     # Now only plot the eigenvalues with accurate eigenvectors
-    tolerance = .02
-    nfields, ncoeff = 5, Lmax*Nmax
-    good = [np.linalg.norm(evectors[nfields*ncoeff:,i]) < tolerance for i in range(len(evalues))]
-    print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
-    evalues, evectors = evalues[good], evectors[:,good]
+    tolerance = np.inf
+    if tolerance < np.inf:
+        nfields = 5
+        Nlengths, _ = coeff_sizes(Lmax, Nmax, truncate)
+        tauoffset = nfields * (np.sum(Nlengths) if boundary_method == 'galerkin' else Lmax*Nmax)
+        good = [np.linalg.norm(evectors[tauoffset:,i]) < tolerance for i in range(len(evalues))]
+        print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
+        evalues, evectors = evalues[good], evectors[:,good]
 
     error_only = not plot_fields
     ns, neta = 1024, 1025
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method,
-              'Ekman': Ekman, 'Prandtl': Prandtl, 'Rayleigh': Rayleigh}
-    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, bases, domain, error_only=error_only)
+    bases = create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta)
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, bases, error_only=error_only)
 
     fig, ax = plot_spectrum(evalues, onpick)
     ax.set_title('Boussinesq Eigenvalues')
 
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
 
 
-def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
+def plot_gravest_modes(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -547,8 +564,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     # Create the plotting domain
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    domain = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 's': s, 'eta': eta, 'boundary_method': boundary_method}
+    bases = create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta)
 
     # Plot
     nrows, ncols = 2, 5
@@ -558,7 +574,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
     row, col = 0, 0
     for ii in range(nrows*ncols):
         evalue, evector = evalues[-1-ii], evectors[:,-1-ii]
-        field = expand_evectors(Lmax, Nmax, evector, bases, domain, fields=[fieldname])[fieldname]
+        field = expand_evectors(evector, bases, fields=[fieldname])[fieldname]
 
         # Plot the field
         ax = plot_axes[row][col]
@@ -579,24 +595,52 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
             col = 0
 
     # Save the figure
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix='fields')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='figures', ext='.png', prefix='fields')
     save_figure(plot_filename, fig, dpi=600)
 
 
 def rotation_configs():
-    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 20, 'Nmax': 21},
-            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 20, 'Nmax': 20},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 20, 'Nmax': 20},
-            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 28, 'Nmax': 40},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 100, 'Nmax': 200},
-            {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 16, 'Nmax': 32},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 120, 'Nmax': 240},
+    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 40, 'Nmax': 40},
+            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 60, 'Nmax': 40},
+            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 40, 'Nmax': 40},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 100, 'Nmax': 60},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 120, 'Nmax': 80},
+            {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 140, 'Nmax': 100},
+            {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 160, 'Nmax': 120},
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 240, 'Nmax': 200},
             {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 120, 'Nmax': 200},
             {'Ekman': 10**-9, 'm': 300, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
             {'Ekman': 10**-10, 'm': 646, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
             {'Ekman': 10**-11, 'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
             ]
+
+
+def _solve_helper(config_index):
+    boundary_method = 'galerkin'
+    boundary_condition = 'no-slip'
+    truncate = True
+    nev = 10
+
+    config = rotation_configs()[config_index]
+    m, Lmax, Nmax = config['m'], config['Lmax'], config['Nmax']
+    Ekman, Prandtl, Rayleigh = config['Ekman'], 1, config['Rayleigh']
+
+    # Skip if we already have it
+    filename = output_filename(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+    if os.path.exists(filename):
+        print('  Already solved')
+        return
+
+    omega = config['omega']
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev=nev)
+
+
+def solve():
+    indices = range(8)
+
+    pool = mp.Pool(mp.cpu_count()-1)
+    pool.map(_solve_helper, indices)
+
 
 def main():
     solve = True
@@ -604,10 +648,11 @@ def main():
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
+    truncate = True
 #    nev = 'all'
-    nev = 40
+    nev = 10
 
-    config_index = 8
+    config_index = 7
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
@@ -621,11 +666,10 @@ def main():
     print('  Boundary method = ' + boundary_method)
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev=nev)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, omega, plot_spy, nev=nev)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields)
-#        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
+        plot_solution(m, Lmax, Nmax, boundary_method, truncate, Ekman, Prandtl, Rayleigh, plot_evalues, plot_fields)
         plt.show()
 
 
@@ -643,7 +687,7 @@ def analyze_evalues():
     Lhires, Nhires = 52, 52
 
     def load_evalues(L, N):
-        filename = output_filename(m, L, N, boundary_method, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
+        filename = output_filename(m, L, N, boundary_method, truncate, Ekman, Prandtl, Rayleigh, directory='data', ext='.pckl')
         data = pickle.load(open(filename, 'rb'))
         return data['evalues'], data['evectors']
         
@@ -658,7 +702,7 @@ def analyze_evalues():
         Lmax, Nmax = Llores, Nlores
         ns, neta = 256, 255
         s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-        bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+        bases = create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta)
         onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
     else:
         onpick = None

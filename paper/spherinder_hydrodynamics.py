@@ -1,9 +1,5 @@
 import numpy as np
 import scipy.sparse as sparse
-
-
-import matplotlib
-matplotlib.rcParams.update({'font.size': 14})
 import matplotlib.pyplot as plt
 
 import os
@@ -14,19 +10,32 @@ from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
 
 
-g_alpha_p = 2
 g_file_prefix = 'spherinder_hydrodynamics'
 
 
-def matrices_galerkin(m, Lmax, Nmax, Ekman):
+def coeff_sizes(Lmax, Nmax, truncate):
+    lengths = [Nmax-(ell//2 if truncate else 0) for ell in range(Lmax)]
+    offsets = np.append(0, np.cumsum(lengths)[:-1])
+    return lengths, offsets
+
+
+use_extended_pressure = True
+
+def pressure_size(Lmax, Nmax, full=use_extended_pressure):
+    return (Lmax+2, Nmax+1) if full else (Lmax, Nmax)
+
+
+def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
     """Construct matrices for X = [u(+), u(-), u(z), p]
     """
     alpha_bc, alpha_bc_s = 2, 1
 
     Lout, Nout = Lmax+2, Nmax+1
+    Lp, Np = pressure_size(Lmax, Nmax)
     ncoeff = Lout*Nout
     ncoeff0 = Lmax*Nmax
-
+    ncoeffp = Lp*Np
+    
     # Galerkin conversion operators
     Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
     Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
@@ -44,14 +53,10 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
 
     # Pressure gradient
-    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=g_alpha_p)
-    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, truncate=False)
-    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, truncate=False)
-    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  truncate=False)
-    Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
-    Gradp = sph.resize(Gradp, Lmax,   Nmax+1, Lout, Nout)
-    Gradm = sph.resize(Gradm, Lmax,   Nmax+2, Lout, Nout)
-    Gradz = sph.resize(Gradz, Lmax-1, Nmax+1, Lout, Nout)
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lp, Np, alpha=2)
+    Gradp = sph.resize(Gradp, Lp,   Np,   Lout, Nout)
+    Gradm = sph.resize(Gradm, Lp,   Np+1, Lout, Nout)
+    Gradz = sph.resize(Gradz, Lp-1, Np,   Lout, Nout)
 
     # Conversion matrices
     Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, truncate=True)
@@ -62,7 +67,7 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     M00 = Cp @ Boundp
     M11 = Cm @ Boundm
     M22 = Cz @ Boundz
-    M33 = sparse.lil_matrix((ncoeff,ncoeff0))
+    M33 = sparse.lil_matrix((ncoeff,ncoeffp))
 
     # i*u+ equation - spin+ velocity component
     L00 = (-2j * Cp + Ekman * Lapp) @ Boundp
@@ -86,7 +91,7 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     L30 = Divp @ Boundp
     L31 = Divm @ Boundm
     L32 = Divz @ Boundz
-    L33 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L33 = sparse.lil_matrix((ncoeff,ncoeffp))
 
     Mmats = [M00, M11, M22, M33]
     upmats = [L00, L01, L02, L03]
@@ -94,17 +99,31 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     uzmats = [L20, L21, L22, L23]
     pmats = [L30, L31, L32, L33]
 
+    # Truncate the matrices
+    if truncate:
+        for mats in [Mmats, upmats, ummats, uzmats, pmats]:
+            for i in range(3):
+                mats[i] = sph.triangular_truncate(mats[i], Lmax, Nmax, Lout, Nout)
+            mats[3] = sph.triangular_truncate(mats[3], Lp, Np, Lout, Nout)
+
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
     L = sparse.bmat([upmats, ummats, uzmats, pmats], format=sparse_format)
 
     # Tau polynomials
     def tau_polynomials():
-        def make_tau_column(a,b,c,d):
-            return sparse.bmat([[  a,0*b,0*c,0*d],
-                                [0*a,  b,0*c,0*d],
-                                [0*a,0*b,  c,0*d],
-                                [0*a,0*b,0*c,  d]])
+        if truncate and use_extended_pressure:
+            def make_tau_column(a,b,c,d):
+                return sparse.bmat([[  a,0*c,0*d],
+                                    [0*a,0*c,0*d],
+                                    [0*a,  c,0*d],
+                                    [0*a,0*c,  d]])
+        else:
+            def make_tau_column(a,b,c,d):
+                return sparse.bmat([[  a,0*b,0*c,0*d],
+                                    [0*a,  b,0*c,0*d],
+                                    [0*a,0*b,  c,0*d],
+                                    [0*a,0*b,0*c,  d]])
         hstack = sparse.hstack
 
         Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, truncate=True)
@@ -112,8 +131,13 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
         Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
         Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, truncate=True)
 
-        taup1, taum1, tauz1, taus1 = Taup[:,Nout-1:-2*Nout:Nout], Taum[:,Nout-1:-2*Nout:Nout], Tauz[:,Nout-1:-2*Nout:Nout], Taus[:,Nout-1:-2*Nout:Nout]
-        taup2, taum2, tauz2, taus2 = Taup[:,-2*Nout:], Taum[:,-2*Nout:], Tauz[:,-2*Nout:], Taus[:,-2*Nout:]
+        Ts = [Taup, Taum, Tauz, Taus]
+        if truncate:
+            for i in range(4):
+                Ts[i] = sph.triangular_truncate(Ts[i], Lout, Nout, Lout, Nout)
+        Nlengths, Noffsets = coeff_sizes(Lout, Nout, truncate)
+        taup1, taum1, tauz1, taus1 = tuple(hstack([T[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)]) for T in Ts)
+        taup2, taum2, tauz2, taus2 = tuple(T[:,Noffsets[-2]:] for T in Ts)
  
         col = make_tau_column(hstack([taup1,taup2]), hstack([taum1,taum2]), hstack([tauz1,tauz2]), hstack([taus1,taus2]))
         return col
@@ -126,9 +150,9 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     return M, L
 
 
-def matrices(m, Lmax, Nmax, boundary_method, Ekman):
+def matrices(m, Lmax, Nmax, boundary_method, Ekman, truncate):
     if boundary_method in ['galerkin']:
-        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, Ekman)
+        return eval('matrices_' + boundary_method)(m, Lmax, Nmax, Ekman, truncate)
     else:
         raise ValueError('Unsupported boundary method')
 
@@ -167,16 +191,17 @@ def make_filename_prefix(directory='data'):
     return os.path.join(abspath, g_file_prefix)
 
 
-def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext, prefix='evalues'):
-    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}' + ext
+def output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory, ext, prefix='evalues'):
+    truncstr = '-truncated' if truncate else ''
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}{truncstr}' + ext
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_spy, nev, evalue_target):
     # Construct the system
     print('Constructing matrix system...')
-    M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman)
+    M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, truncate)
 
-    permute = True
+    permute = not truncate  # FIXME: sort out permutation for truncated series
     enable_permutation = permute and boundary_method == 'galerkin'
 
     if enable_permutation:
@@ -205,46 +230,48 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, eva
 
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
-            'boundary_method': boundary_method,
+            'boundary_method': boundary_method, 'truncated': truncate,
             'evalues': evalues, 'evectors': evectors,
             'Ekman': Ekman}
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='data', ext='.pckl')
     save_data(filename, data)
 
 
-def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
+def create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta):
     if boundary_method == 'galerkin':
         galerkin = True
         dalpha = 1
+        Lp, Np = pressure_size(Lmax, Nmax)
     else:
         galerkin = False
         dalpha = 0
+        Lp, Np = Lmax, Nmax
 
-    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
-    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
-    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
-    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=g_alpha_p, galerkin=False)
+    upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin, truncate=truncate)
+    pbasis  = sph.Basis(s, eta, m, Lp, Np, sigma=0,  alpha=2, galerkin=False, truncate=truncate)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis}
 
     return bases
 
 
 def expand_evectors(Lmax, Nmax, vec, bases):
-    ncoeff = Lmax*Nmax
+    nup, num, nuz, npr = tuple(bases[f].ncoeffs for f in ['up','um','uz','p'])
 
     # Get the grid space vector fields
-    upcoeff = vec[:ncoeff] 
-    umcoeff = vec[ncoeff:2*ncoeff] 
-    uzcoeff = vec[2*ncoeff:3*ncoeff]
-    pcoeff = vec[3*ncoeff:4*ncoeff]
-    tau = vec[4*ncoeff:]
+    upcoeff = vec[:nup] 
+    umcoeff = vec[nup:nup+num]
+    uzcoeff = vec[nup+num:nup+num+nuz]
+    pcoeff = vec[nup+num+nuz:nup+num+nuz+npr]
+    tau = vec[nup+num+nuz+npr:]
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
 
     # Convert to grid space
-    up = bases['up'].expand(upcoeff.reshape((Lmax,Nmax)))
-    um = bases['um'].expand(umcoeff.reshape((Lmax,Nmax)))
-    uz = bases['uz'].expand(uzcoeff.reshape((Lmax,Nmax)))
-    p  = bases['p'].expand(pcoeff.reshape((Lmax,Nmax)))
+    up = bases['up'].expand(upcoeff)
+    um = bases['um'].expand(umcoeff)
+    uz = bases['uz'].expand(uzcoeff)
+    p  = bases['p'].expand(pcoeff)
     u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
 
     return u, v, w, p, tau
@@ -263,7 +290,7 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
         field_index = field_indices[i]
         f = fields[field_index]
         f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
-        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=True)
+        sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=False)
         ax[i].set_title(r'${}$'.format(field_names[field_index]))
         if i > 0:
             ax[i].set_yticklabels([])
@@ -277,9 +304,9 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_fields):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='data', ext='.pckl')
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -288,36 +315,28 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
     # Plot callback
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+    bases = create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta)
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
 
     # Eigenvalue plot
     fig, ax = plot_spectrum(evalues, onpick=onpick)
     ax.set_title('Spherinder Basis')
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
 
 
-def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
+def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, truncate):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='data', ext='.pckl')
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    # Only plot the eigenvalues with accurate eigenvectors
-#    tolerance = .01
-    tolerance = np.inf
-    ncoeff = Lmax*Nmax
-    good = [np.linalg.norm(evectors[4*ncoeff:,i]) < tolerance for i in range(len(evalues))]
-    print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
-    evalues, evectors = evalues[good], evectors[:,good]
-
     # Plot callback
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+    bases = create_bases(m, Lmax, Nmax, boundary_method, truncate, s, eta)
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
 
     xlim, ylim, xticks, evalue_targets = None, None, None, None
@@ -359,7 +378,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
     if xticks is not None:
         ax.set_xticks(xticks)
 
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='-zoom.png')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='figures', ext='-zoom.png')
     save_figure(plot_filename, fig)
 
     if evalue_targets is None:
@@ -381,30 +400,34 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
             ax[i].set_yticklabels([])
             ax[i].set_ylabel(None)
 
-    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', prefix='evectors', ext='.png')
+    plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='figures', prefix='evectors', ext='.png')
     save_figure(plot_filename, fig)
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
+    truncate = True
 
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 200, 1000, -0.0070738+0.060679j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 45, 45, 'all', None
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 60, 60, 'all', None
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
-    print('  Domain size: Lmax = {}, Nmax = {}'.format(Lmax, Nmax))
-    print('  Boundary method = ' + boundary_method)
+    print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
+    print(f'  Boundary method = {boundary_method}')
+    print(f'  Truncate = {truncate}, Extended pressure coefficients = {use_extended_pressure}')
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields)
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_fields)
         plt.show()
 
 
