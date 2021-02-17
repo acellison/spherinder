@@ -521,19 +521,20 @@ class RdR(Operator):
         Operator.__init__(self, codomain=Codomain(0,+1,+1), dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
-
-        A, B, C, D, N = self.A, self.B, self.C, self.D, self.N
+        # Fixme: just cascade rdot with gradient for implementation
+        A, B, C, D = self.A, self.B, self.C, self.D
 
         op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
         gamma_ell, delta_ell = np.diag(op), -np.diag(op,2)
 
+        N = lambda ell: self.n_for_ell(Nmax, ell)
+
         zmat = np.diag(gamma_ell)
-        smats = make_s_op((N-(m+sigma))*A(+1) + 2*(B(+1) @ C(+1)), sigma=sigma)
+        smats = [((ell-(m+sigma))*A(+1) + 2*(B(+1) @ C(+1)))(N(ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
         Op1 = make_operator(zmat, smats, Nmax=Nmax+1)
 
         zmat = np.diag(delta_ell,2)
-        smats = make_s_op((N+2*alpha+1+m+sigma)*A(-1) + 2*(B(+1) @ D(-1)), sigma=sigma)
+        smats = [((ell+2*alpha+1+m+sigma)*A(-1) + 2*(B(+1) @ D(-1)))(N(ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
         Op2 = make_operator(zmat, smats)
 
         Op = Op1 + Op2
