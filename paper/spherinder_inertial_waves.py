@@ -55,9 +55,9 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
         rmats = [Rad[:,:n//3], Rad[:,n//3:2*n//3], Rad[:,2*n//3:]]
         rmats = [sph.triangular_truncate(rmat, Lmax, Nmax) for rmat in rmats]
         Rad = sparse.hstack(rmats)
-        Boundary = sph.operator('boundary', dtype='float128', internal='float128')(m, Lmax, Nmax, alpha=1, sigma=0, truncate=True)
+        Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=True)(m, Lmax, Nmax, alpha=1, sigma=0)
     else:
-        Boundary = sph.operator('boundary', dtype='float128', internal='float128')(m, Lmax+1, Nmax+1, alpha=1, sigma=0, truncate=False)
+        Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=False)(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
     Bound = Boundary @ Rad
     Bound = sph.remove_zero_rows(Bound).astype('float64')
 

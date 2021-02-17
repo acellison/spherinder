@@ -53,7 +53,7 @@ def matrices_tau(m, Lmax, Nmax, truncate):
 
     # Tau polynomials
     Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
-    row = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0, truncate=truncate)
+    row = sph.operator('boundary', truncate=truncate)(m, Lmax, Nmax, alpha=0, sigma=0)
 
     if truncate:
         M = sph.triangular_truncate(M, Lmax, Nmax)
@@ -171,7 +171,7 @@ def check_boundary(m, Lmax, Nmax, truncate, evalues, evectors, plot=False):
     basis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0, galerkin=False, truncate=truncate)
     ncoeff = basis.ncoeffs
 
-    bc = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0, truncate=truncate)
+    bc = sph.operator('boundary', truncate=truncate)(m, Lmax, Nmax, alpha=0, sigma=0)
 
     result = bc @ evectors[:ncoeff,:]
     error = np.linalg.norm(result, axis=0)
@@ -369,13 +369,13 @@ def solve():
 
 
 def main():
-    solve = False
+    solve = True
     plot_evalues = True
     plot_fields = True
 
     m = 30
     Lmax, Nmax = 40, 40
-    boundary_method = 'galerkin'
+    boundary_method = 'tau'
     truncate = True
 
     print('Bessel Eigenproblem, m = {}, boundary method = {}, truncate = {}'.format(m, boundary_method, truncate))
