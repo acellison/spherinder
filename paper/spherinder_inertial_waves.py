@@ -31,33 +31,29 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
     beta_bc_z = 0     # tau polynomial basis shift, no greater than 1
     beta_bc_div = 0   # tau polynomial basis shift, no greater than 2
 
-    ncoeff = Lmax*Nmax
+    ncoeff = sum([Nmax-ell//2 for ell in range(Lmax)]) if truncate else Lmax*Nmax
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
     # Scalar gradient operators
-    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=0)
-    Gradm = sph.resize(Gradm, Lmax, Nmax+1, Lmax, Nmax)  # truncate e(-)^* . Gradp(p)
-    Gradz = sph.resize(Gradz, Lmax-1, Nmax, Lmax, Nmax)  # pad
+    Gradp, Gradm, Gradz = sph.operator('grad', truncate=truncate)(m, Lmax, Nmax, alpha=0)
+    if not truncate:
+        Gradm = sph.resize(Gradm, Lmax, Nmax+1, Lmax, Nmax)  # truncate e(-)^* . Gradp(p)
+        Gradz = sph.resize(Gradz, Lmax-1, Nmax, Lmax, Nmax)  # pad
 
     # Vector divergence operator
-    Div = sph.operator('div')(m, Lmax, Nmax, alpha=1)
-    Div = sph.resize(Div, Lmax, Nmax+1, Lmax, Nmax)      # truncate Div . e(+)^* . u
-    Divp = Div[:,:ncoeff]
-    Divm = Div[:,ncoeff:2*ncoeff]
-    Divz = Div[:,2*ncoeff:]
+    Div = sph.operator('div', truncate=truncate)(m, Lmax, Nmax, alpha=1)
+    if not truncate:
+        Div = sph.resize(Div, Lmax, Nmax+1, Lmax, Nmax)      # truncate Div . e(+)^* . u
+    Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
 
     # Boundary condition
-    Rad = sph.operator('rdot', dtype='float128')(m, Lmax, Nmax, alpha=1)
+    Rad = sph.operator('rdot', dtype='float128', truncate=truncate)(m, Lmax, Nmax, alpha=1)
     if truncate:
-        Rad = sph.resize(Rad, Lmax+1, Nmax+1, Lmax, Nmax)  # A bit of information loss here
-        n = np.shape(Rad)[1]
-        rmats = [Rad[:,:n//3], Rad[:,n//3:2*n//3], Rad[:,2*n//3:]]
-        rmats = [sph.triangular_truncate(rmat, Lmax, Nmax) for rmat in rmats]
-        Rad = sparse.hstack(rmats)
-        Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=True)(m, Lmax, Nmax, alpha=1, sigma=0)
+        Lout, Nout = Lmax, Nmax
     else:
-        Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=False)(m, Lmax+1, Nmax+1, alpha=1, sigma=0)
+        Lout, Nout = Lmax+1, Nmax+1
+    Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=truncate)(m, Lout, Nout, alpha=1, sigma=0)
     Bound = Boundary @ Rad
     Bound = sph.remove_zero_rows(Bound).astype('float64')
 
@@ -97,13 +93,6 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
     ummats = [L10, L11, L12, L13]
     uzmats = [L20, L21, L22, L23]
     pmats = [L30, L31, L32, L33]
-
-    if truncate:
-        Mmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in Mmats]
-        upmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in upmats]
-        ummats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in ummats]
-        uzmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in uzmats]
-        pmats = [sph.triangular_truncate(mat, Lmax, Nmax) for mat in pmats]
 
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
@@ -496,7 +485,7 @@ def main():
     plot_spy = False
 
     m = 95
-    Lmax, Nmax = 32, 32
+    Lmax, Nmax = 16, 16
     boundary_method = 'tau'
     truncate = True
 

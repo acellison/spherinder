@@ -135,19 +135,25 @@ def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', color
     fig.set_tight_layout(True)
 
 
-def resize(mat, Lin, Nin, Lout, Nout):
+def resize(mat, Lin, Nin, Lout, Nout, truncate=False):
     """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
        This appends and deletes rows as necessary without touching the columns.
        Nin and Nout are functions of ell and return the number of radial coefficients
        for each vertical degree"""
     if np.isscalar(Nin):
         ninvalue = Nin
-        Nin = lambda _: ninvalue
+        if truncate:
+            Nin = lambda ell: ninvalue - ell//2
+        else:
+            Nin = lambda _: ninvalue
     nintotal = sum([Nin(ell) for ell in range(Lin)])
 
     if np.isscalar(Nout):
         noutvalue = Nout
-        Nout = lambda _: noutvalue
+        if truncate:
+            Nout = lambda ell: noutvalue - ell//2
+        else:
+            Nout = lambda _: noutvalue
     nouttotal = sum([Nout(ell) for ell in range(Lout)])
 
     nrows, ncols = np.shape(mat)
@@ -444,7 +450,12 @@ class RadialVector(Operator):
         Opz2 = make_operator(zmat, smats, Lmax=Lmax+1, truncate=self.truncate)
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
-        return _hstack([Opp, Opm, Opz]).astype(self.dtype)
+        Op = _hstack([Opp, Opm, Opz])
+
+        if self.truncate:
+            Op = resize(Op, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
+
+        return Op.astype(self.dtype)
 
 
 class RadialMultiplication(Operator):
@@ -583,6 +594,9 @@ class Gradient(Operator):
         smats = make_s_op(Id, sigma=0)
         Opz = make_operator(zmat, smats, truncate=self.truncate)
 
+        if self.truncate:
+            Opm = resize(Opm, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
+            Opz = resize(Opz, Lmax-1, Nmax, Lmax, Nmax, truncate=True)
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
 
@@ -624,7 +638,10 @@ class Divergence(Operator):
         smats = make_s_op(Id, sigma=0)
         Opz = make_operator(zmat, smats, Lmax=Lmax, Nmax=Nmax+1, truncate=self.truncate)
 
-        return _hstack([Opp, Opm, Opz]).astype(self.dtype)
+        Op = _hstack([Opp, Opm, Opz])
+        if self.truncate:
+            Op = resize(Op, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
+        return Op.astype(self.dtype)
 
 
 class Curl(Operator):
