@@ -19,7 +19,7 @@ def coeff_sizes(Lmax, Nmax, truncate):
     return lengths, offsets
 
 
-use_extended_pressure = True
+use_extended_pressure = False
 
 def pressure_size(Lmax, Nmax, full=use_extended_pressure):
     return (Lmax+2, Nmax+1) if full else (Lmax, Nmax)
@@ -59,9 +59,9 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
     Gradz = sph.resize(Gradz, Lp-1, Np,   Lout, Nout)
 
     # Conversion matrices
-    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, truncate=True)
-    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, truncate=True)
-    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0, truncate=True)
+    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, exact=False)
+    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, exact=False)
+    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0,  exact=False)
     
     # Time derivative matrices
     M00 = Cp @ Boundp
@@ -126,10 +126,10 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
                                     [0*a,0*b,0*c,  d]])
         hstack = sparse.hstack
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, truncate=True)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, truncate=True)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, truncate=True)
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, exact=False)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, exact=False)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0,  exact=False)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, exact=False)
 
         Ts = [Taup, Taum, Tauz, Taus]
         if truncate:
@@ -384,7 +384,9 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, truncate):
     if evalue_targets is None:
         return
 
-    fig, ax = plt.subplots(1,len(evalue_targets),figsize=(2.75*len(evalue_targets),5))
+    nrows = 2
+    ncols = 3
+    fig, plot_axes = plt.subplots(nrows,ncols,figsize=(2.75*ncols,4*nrows))
     for i, index in enumerate(evalue_indices):
         evalue, evector = evalues[index], evectors[:,index]
 
@@ -394,27 +396,33 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, truncate):
         p = p.real if relative_real > 0.5 else p.imag
         p /= np.max(abs(p))
 
-        sph.plotfield(s, eta, p, fig=fig, ax=ax[i], colorbar=False)
-        ax[i].set_title(f'$\lambda = ${evalue_target:.4f}')
-        if i > 0:
-            ax[i].set_yticklabels([])
-            ax[i].set_ylabel(None)
+        row, col = i//ncols, i%ncols
+        ax = plot_axes[row][col]
+        sph.plotfield(s, eta, p, fig=fig, ax=ax, colorbar=False)
+        ax.set_title(f'$\lambda = ${evalue:.4f}')
+        if col > 0:
+            ax.set_yticklabels([])
+            ax.set_ylabel(None)
+        if row < nrows-1:
+            ax.set_xticklabels([])
+            ax.set_xlabel(None)
 
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, truncate, directory='figures', prefix='evectors', ext='.png')
     save_figure(plot_filename, fig)
 
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
-    truncate = True
+    truncate = False
 
     m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 45, 45, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 60, 60, 'all', None
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
@@ -427,7 +435,8 @@ def main():
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_fields)
+#        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, truncate, plot_fields)
+        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, truncate)
         plt.show()
 
 

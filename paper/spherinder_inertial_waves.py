@@ -108,12 +108,12 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
         if beta_bc_z > 0:
             Convz1 = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=0, beta=beta_bc_z)
         else:
-            Convz1 = sph.convert_alpha(1-alpha_bc_z, m, Lmax, Nmax, alpha=alpha_bc_z, sigma=0, truncate=True)
+            Convz1 = sph.convert_alpha(1-alpha_bc_z, m, Lmax, Nmax, alpha=alpha_bc_z, sigma=0, exact=False)
 
         if beta_bc_div > 0:
             Convz2 = sph.convert_beta(m, Lmax, Nmax, alpha=2, sigma=0, beta=beta_bc_div)
         else:
-            Convz2 = sph.convert_alpha(2-alpha_bc_div, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, truncate=True)
+            Convz2 = sph.convert_alpha(2-alpha_bc_div, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, exact=False)
 
         conv1, conv2 = Convz1[:,-Nmax:], Convz2[:,-Nmax:]
         col1 = sparse.bmat([[0*conv1,0*conv2],
@@ -126,7 +126,7 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
         if beta_bc_p > 0:
             Convp = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=+1, beta=beta_bc_p)
         else:
-            Convp = sph.convert_alpha(1-alpha_bc_p, m, Lmax, Nmax, alpha=alpha_bc_p, sigma=+1, truncate=True)
+            Convp = sph.convert_alpha(1-alpha_bc_p, m, Lmax, Nmax, alpha=alpha_bc_p, sigma=+1, exact=False)
         col2 = Convp[:,Nmax-1::Nmax]
         col2 = sparse.vstack([col2,0*col2,0*col2,0*col2])
 
@@ -143,10 +143,10 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
         whichtau = 0
         alpha_bc = 0
 
-        Conv0 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, truncate=True)
-        Conv1 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, truncate=True)
-        Conv2 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
-        Conv3 = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, truncate=True)
+        Conv0 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, exact=False)
+        Conv1 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, exact=False)
+        Conv2 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False)
+        Conv3 = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, exact=False)
         Convs = [Conv0, Conv1, Conv2, Conv3]
         Conv = sph.triangular_truncate(Convs[whichtau], Lmax, Nmax, Lmax, Nmax)
 
@@ -485,7 +485,7 @@ def main():
     plot_spy = False
 
     m = 95
-    Lmax, Nmax = 16, 16
+    Lmax, Nmax = 32, 32
     boundary_method = 'tau'
     truncate = True
 

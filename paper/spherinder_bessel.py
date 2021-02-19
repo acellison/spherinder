@@ -47,12 +47,12 @@ def matrices_tau(m, Lmax, Nmax, truncate):
     alpha_bc = 0
 
     # Differentiation matrices
-    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0, truncate=True)
+    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0, exact=False)
     L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
     L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
 
     # Tau polynomials
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False)
     row = sph.operator('boundary', truncate=truncate)(m, Lmax, Nmax, alpha=0, sigma=0)
 
     if truncate:
@@ -81,7 +81,7 @@ def matrices_galerkin(m, Lmax, Nmax, truncate):
     alpha_bc = 1
     Lout, Nout = Lmax+2, Nmax+1
 
-    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, truncate=True)
+    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, exact=False)
     L = sph.operator('laplacian')(m, Lout, Nout, alpha=0)
     L = sph.resize(L, Lout, Nout+1, Lout, Nout)
 
@@ -91,7 +91,7 @@ def matrices_galerkin(m, Lmax, Nmax, truncate):
     M = M @ Bound
     L = L @ Bound
 
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, exact=False)
 
     if truncate:
         M = sph.triangular_truncate(M, Lmax, Nmax, Lout, Nout)

@@ -346,6 +346,7 @@ class Operator():
         return self._codomain
 
     def _make_s_op(self, expr, m, Lmax, Nmax, alpha, sigma):
+        # Fixme: could do some codomain checking here
         return [expr(self.n_for_ell(Nmax, ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
 
     def _bind_s_op(self, m, Lmax, Nmax, alpha):
@@ -430,7 +431,6 @@ class RadialVector(Operator):
         # Coeff space operator: s * u(+)
         zmat = Id(Lmax,alpha,alpha)
         smats = make_s_op(B(-1), sigma=+1)                                      # (n,a,b) -> (n+1,a,b-1)
-        smat = self._make_s_op(B(-1), m, Lmax, Nmax, alpha, sigma=+1)
         Opp = 1/2 * make_operator(zmat, smats, Nmax=Nmax+1, Lmax=Lmax+1, truncate=self.truncate)
  
         # Coeff space operator: s * u(-)
@@ -801,16 +801,13 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     raise ValueError('Unknown operator')
 
 
-def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, truncate, dtype='float64', internal=internal_dtype):
-    # Fixme: truncate here means something different than triangular truncation!
-    # Implement 'exact' instead, which hold on to additional resolution then
-    # add triangular truncation support
+def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, exact, dtype='float64', internal=internal_dtype):
     Conv = operator('conversion', dtype=internal, internal=internal, truncate=False)
     op = sparse.eye(Lmax*Nmax, format='csr', dtype=internal)
     for i in range(ntimes):
         op1 = Conv(m, Lmax, Nmax+i, alpha=alpha+i, sigma=sigma)
         op = op1 @ op
-    Ntrunc = Nmax if truncate else Nmax+1
+    Ntrunc = Nmax+1 if exact else Nmax
     op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc)
     return op.astype(dtype)
     

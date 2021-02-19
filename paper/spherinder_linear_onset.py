@@ -49,22 +49,22 @@ def matrices_tau(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
 
     # Convert operators to the proper alpha spaces
     # u(+) conversion from alpha=1 to alpha=3
-    Cp = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=+1, truncate=True)
+    Cp = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=+1, exact=False)
 
     # u(-) conversion from alpha=1 to alpha=3
-    Cm = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=-1, truncate=True)
+    Cm = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=-1, exact=False)
 
     # u(z) conversion from alpha=1 to alpha=3
-    Cz = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=0, truncate=True)
+    Cz = sph.convert_alpha(2, m, Lmax, Nmax, alpha=1, sigma=0, exact=False)
  
     # scalar conversion from alpha to alpha+2
-    Cs = sph.convert_alpha(2, m, Lmax, Nmax, alpha=g_alpha_T, sigma=0, truncate=True)
+    Cs = sph.convert_alpha(2, m, Lmax, Nmax, alpha=g_alpha_T, sigma=0, exact=False)
 
     # Pressure gradient
     Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=g_alpha_p)
-    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, truncate=False)
-    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, truncate=False)
-    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  truncate=False)
+    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, exact=True)
+    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, exact=True)
+    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  exact=True)
     Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
     Gradp = sph.resize(Gradp, Lmax,   Nmax+1, Lmax, Nmax)
     Gradm = sph.resize(Gradm, Lmax,   Nmax+2, Lmax, Nmax)
@@ -72,16 +72,16 @@ def matrices_tau(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
 
     # Radial vector extraction
     Rad = sph.operator('rdot')(m, Lmax, Nmax, alpha=1)
-    Cr = sph.convert_alpha(1+g_alpha_T, m, Lmax+1, Nmax+1, alpha=1, sigma=0, truncate=False)
+    Cr = sph.convert_alpha(1+g_alpha_T, m, Lmax+1, Nmax+1, alpha=1, sigma=0, exact=True)
     Rad = Cr @ Rad
     Rad = sph.resize(Rad, Lmax+1, Nmax+2, Lmax, Nmax)
     Radp, Radm, Radz = Rad[:,:ncoeff], Rad[:,ncoeff:2*ncoeff], Rad[:,2*ncoeff:]
 
     # Radial vector multiplication r e_r * T, convert from alpha=1 to alpha=3
     RTp, RTm, RTz = sph.operator('rtimes')(m, Lmax, Nmax, alpha=g_alpha_T)
-    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+1, alpha=1+g_alpha_T, sigma=+1, truncate=False)
-    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+2, alpha=1+g_alpha_T, sigma=-1, truncate=False)
-    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lmax+1, Nmax+2, alpha=1+g_alpha_T, sigma=0,  truncate=False)
+    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+1, alpha=1+g_alpha_T, sigma=+1, exact=True)
+    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lmax,   Nmax+2, alpha=1+g_alpha_T, sigma=-1, exact=True)
+    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lmax+1, Nmax+2, alpha=1+g_alpha_T, sigma=0,  exact=True)
     RTp, RTm, RTz = CrTp @ RTp, CrTm @ RTm, CrTz @ RTz
     RTp = sph.resize(RTp, Lmax,   Nmax+2, Lmax, Nmax)
     RTm = sph.resize(RTm, Lmax,   Nmax+3, Lmax, Nmax)
@@ -155,11 +155,11 @@ def matrices_tau(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
     def no_slip():
         row = Bound
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, truncate=True)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, truncate=True)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, truncate=True)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lmax, Nmax, alpha=alpha_bc_s, sigma=0, truncate=True)
-        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lmax, Nmax, alpha=alpha_bc_T, sigma=0, truncate=True)
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, exact=False)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, exact=False)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lmax, Nmax, alpha=alpha_bc_s, sigma=0, exact=False)
+        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lmax, Nmax, alpha=alpha_bc_T, sigma=0, exact=False)
         taup, taum, tauz, taus, tauT = Taup[:,-2*Nmax:], Taum[:,-2*Nmax:], Tauz[:,-2*Nmax:], Taus[:,-2*Nmax:], TauT[:,-2*Nmax:]
         col1 = sparse.bmat([[  taup,0*taum,0*tauz,0*tauT],
                             [0*taup,  taum,0*tauz,0*tauT],
@@ -225,9 +225,9 @@ def matrices_galerkin(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
 
     # Pressure gradient
     Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=g_alpha_p)
-    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, truncate=False)
-    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, truncate=False)
-    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  truncate=False)
+    Cgp = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax,   alpha=1+g_alpha_p, sigma=+1, exact=True)
+    Cgm = sph.convert_alpha(2-g_alpha_p, m, Lmax,   Nmax+1, alpha=1+g_alpha_p, sigma=-1, exact=True)
+    Cgz = sph.convert_alpha(2-g_alpha_p, m, Lmax-1, Nmax,   alpha=1+g_alpha_p, sigma=0,  exact=True)
     Gradp, Gradm, Gradz = Cgp @ Gradp, Cgm @ Gradm, Cgz @ Gradz
     Gradp = sph.resize(Gradp, Lmax,   Nmax+1, Lout, Nout)
     Gradm = sph.resize(Gradm, Lmax,   Nmax+2, Lout, Nout)
@@ -235,26 +235,26 @@ def matrices_galerkin(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
 
     # Radial vector extraction
     Rad = sph.operator('rdot')(m, Lout, Nout, alpha=1)
-    Cr = sph.convert_alpha(1+g_alpha_T, m, Lout+1, Nout+1, alpha=1, sigma=0, truncate=False)
+    Cr = sph.convert_alpha(1+g_alpha_T, m, Lout+1, Nout+1, alpha=1, sigma=0, exact=True)
     Rad = Cr @ Rad
     Rad = sph.resize(Rad, Lout+1, Nout+2, Lout, Nout)
     Radp, Radm, Radz = Rad[:,:ncoeff], Rad[:,ncoeff:2*ncoeff], Rad[:,2*ncoeff:]
 
     # Radial vector multiplication r e_r * T, convert from alpha=1 to alpha=3
     RTp, RTm, RTz = sph.operator('rtimes')(m, Lout, Nout, alpha=g_alpha_T)
-    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+1, alpha=1+g_alpha_T, sigma=+1, truncate=False)
-    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+2, alpha=1+g_alpha_T, sigma=-1, truncate=False)
-    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lout+1, Nout+2, alpha=1+g_alpha_T, sigma=0,  truncate=False)
+    CrTp = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+1, alpha=1+g_alpha_T, sigma=+1, exact=True)
+    CrTm = sph.convert_alpha(2-g_alpha_T, m, Lout,   Nout+2, alpha=1+g_alpha_T, sigma=-1, exact=True)
+    CrTz = sph.convert_alpha(2-g_alpha_T, m, Lout+1, Nout+2, alpha=1+g_alpha_T, sigma=0,  exact=True)
     RTp, RTm, RTz = CrTp @ RTp, CrTm @ RTm, CrTz @ RTz
     RTp = sph.resize(RTp, Lout,   Nout+2, Lout, Nout)
     RTm = sph.resize(RTm, Lout,   Nout+3, Lout, Nout)
     RTz = sph.resize(RTz, Lout+1, Nout+3, Lout, Nout)
 
     # Conversion matrices
-    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, truncate=True)
-    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, truncate=True)
-    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0, truncate=True)
-    CT = sph.convert_alpha(2, m, Lout, Nout, alpha=g_alpha_T, sigma=0, truncate=True)
+    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, exact=False)
+    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, exact=False)
+    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0, exact=False)
+    CT = sph.convert_alpha(2, m, Lout, Nout, alpha=g_alpha_T, sigma=0, exact=False)
     
     # Time derivative matrices
     M00 = Ekman * Cp @ Boundp
@@ -326,11 +326,11 @@ def matrices_galerkin(m, Lmax, Nmax, truncate, Ekman, Prandtl, Rayleigh):
                                 [0*a,0*b,0*c,0*d,  e]])
         hstack = sparse.hstack
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, truncate=True)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, truncate=True)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, truncate=True)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, truncate=True)
-        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lout, Nout, alpha=alpha_bc_T, sigma=0, truncate=True)
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, exact=False)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, exact=False)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, exact=False)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, exact=False)
+        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lout, Nout, alpha=alpha_bc_T, sigma=0, exact=False)
 
         Ts = [Taup, Taum, Tauz, Taus, TauT]
         if truncate:
