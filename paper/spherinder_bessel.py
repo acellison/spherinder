@@ -47,18 +47,14 @@ def matrices_tau(m, Lmax, Nmax, truncate):
     alpha_bc = 0
 
     # Differentiation matrices
-    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0, exact=False)
-    L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
-    L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
+    M = -sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0, exact=False, truncate=truncate)
+    L = sph.operator('laplacian', truncate=truncate)(m, Lmax, Nmax, alpha=0)
+    if not truncate:
+        L = sph.resize(L, Lmax, Nmax+1, Lmax, Nmax)
 
     # Tau polynomials
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False)
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False, truncate=truncate)
     row = sph.operator('boundary', truncate=truncate)(m, Lmax, Nmax, alpha=0, sigma=0)
-
-    if truncate:
-        M = sph.triangular_truncate(M, Lmax, Nmax)
-        L = sph.triangular_truncate(L, Lmax, Nmax)
-        Conv = sph.triangular_truncate(Conv, Lmax, Nmax)
 
     Nlengths = [Nmax-(ell//2 if truncate else 0) for ell in range(Lmax)]
     Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
@@ -81,22 +77,18 @@ def matrices_galerkin(m, Lmax, Nmax, truncate):
     alpha_bc = 1
     Lout, Nout = Lmax+2, Nmax+1
 
-    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, exact=False)
-    L = sph.operator('laplacian')(m, Lout, Nout, alpha=0)
-    L = sph.resize(L, Lout, Nout+1, Lout, Nout)
+    M = -sph.convert_alpha(2, m, Lout, Nout, alpha=0, sigma=0, exact=False, truncate=truncate)
+    L = sph.operator('laplacian', truncate=truncate)(m, Lout, Nout, alpha=0)
+    if not truncate:
+        L = sph.resize(L, Lout, Nout+1, Lout, Nout)
 
     # Multiplication by 1-r**2 lowers alpha by 1
-    Bound = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
+    Bound = sph.operator('1-r**2', truncate=truncate)(m, Lmax, Nmax, alpha=1, sigma=0)
 
     M = M @ Bound
     L = L @ Bound
 
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, exact=False)
-
-    if truncate:
-        M = sph.triangular_truncate(M, Lmax, Nmax, Lout, Nout)
-        L = sph.triangular_truncate(L, Lmax, Nmax, Lout, Nout)
-        Conv = sph.triangular_truncate(Conv, Lout, Nout, Lout, Nout)
+    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0, exact=False, truncate=truncate)
 
     Nlengths = [Nout-(ell//2 if truncate else 0) for ell in range(Lout)]
     Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])

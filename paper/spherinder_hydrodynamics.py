@@ -32,36 +32,44 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
 
     Lout, Nout = Lmax+2, Nmax+1
     Lp, Np = pressure_size(Lmax, Nmax)
-    ncoeff = Lout*Nout
-    ncoeff0 = Lmax*Nmax
-    ncoeffp = Lp*Np
+    ncoeff = sph.num_coeffs(Lout, Nout, truncate=truncate)
+    ncoeff0 = sph.num_coeffs(Lmax, Nmax, truncate=truncate)
+    ncoeffp = sph.num_coeffs(Lp, Np, truncate=truncate)
     
     # Galerkin conversion operators
-    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
-    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
-    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
+    Boundp = sph.operator('1-r**2', truncate=truncate)(m, Lmax, Nmax, alpha=2, sigma=+1)
+    Boundm = sph.operator('1-r**2', truncate=truncate)(m, Lmax, Nmax, alpha=2, sigma=-1)
+    Boundz = sph.operator('1-r**2', truncate=truncate)(m, Lmax, Nmax, alpha=2, sigma=0)
 
     # Vector laplacian
-    Lapp, Lapm, Lapz = sph.operator('lap', 'vec')(m, Lout, Nout, alpha=1)
-    Lapp = sph.resize(Lapp, Lout, Nout+1, Lout, Nout)
-    Lapm = sph.resize(Lapm, Lout, Nout+1, Lout, Nout)
-    Lapz = sph.resize(Lapz, Lout, Nout+1, Lout, Nout)
+    Lapp, Lapm, Lapz = sph.operator('lap', 'vec', truncate=truncate)(m, Lout, Nout, alpha=1)
+    if not truncate:
+        Lapp = sph.resize(Lapp, Lout, Nout+1, Lout, Nout)
+        Lapm = sph.resize(Lapm, Lout, Nout+1, Lout, Nout)
+        Lapz = sph.resize(Lapz, Lout, Nout+1, Lout, Nout)
 
     # Vector divergence operator
-    Div = sph.operator('div')(m, Lout, Nout, alpha=1)
-    Div = sph.resize(Div, Lout, Nout+1, Lout, Nout)      # truncate Div . e(+)^* . u
+    Div = sph.operator('div', truncate=truncate)(m, Lout, Nout, alpha=1)
+    if not truncate:
+        Div = sph.resize(Div, Lout, Nout+1, Lout, Nout)
     Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
 
     # Pressure gradient
-    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lp, Np, alpha=2)
-    Gradp = sph.resize(Gradp, Lp,   Np,   Lout, Nout)
-    Gradm = sph.resize(Gradm, Lp,   Np+1, Lout, Nout)
-    Gradz = sph.resize(Gradz, Lp-1, Np,   Lout, Nout)
+    Gradp, Gradm, Gradz = sph.operator('grad', truncate=truncate)(m, Lp, Np, alpha=2)
+    if not truncate:
+        Gradp = sph.resize(Gradp, Lp,   Np,   Lout, Nout)
+        Gradm = sph.resize(Gradm, Lp,   Np+1, Lout, Nout)
+        Gradz = sph.resize(Gradz, Lp-1, Np,   Lout, Nout)
+    else:
+        # Pad the pressure gradient to fit the Galerkin coefficient sizes
+        Gradp = sph.resize(Gradp, Lp, Np, Lout, Nout, truncate=True)
+        Gradm = sph.resize(Gradm, Lp, Np, Lout, Nout, truncate=True)
+        Gradz = sph.resize(Gradz, Lp, Np, Lout, Nout, truncate=True)
 
     # Conversion matrices
-    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, exact=False)
-    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, exact=False)
-    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0,  exact=False)
+    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1, exact=False, truncate=truncate)
+    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1, exact=False, truncate=truncate)
+    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0,  exact=False, truncate=truncate)
     
     # Time derivative matrices
     M00 = Cp @ Boundp
@@ -99,13 +107,6 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
     uzmats = [L20, L21, L22, L23]
     pmats = [L30, L31, L32, L33]
 
-    # Truncate the matrices
-    if truncate:
-        for mats in [Mmats, upmats, ummats, uzmats, pmats]:
-            for i in range(3):
-                mats[i] = sph.triangular_truncate(mats[i], Lmax, Nmax, Lout, Nout)
-            mats[3] = sph.triangular_truncate(mats[3], Lp, Np, Lout, Nout)
-
     sparse_format = 'lil'
     M = sparse.block_diag(Mmats, format=sparse_format)
     L = sparse.bmat([upmats, ummats, uzmats, pmats], format=sparse_format)
@@ -126,15 +127,12 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, truncate):
                                     [0*a,0*b,0*c,  d]])
         hstack = sparse.hstack
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, exact=False)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, exact=False)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0,  exact=False)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, exact=False)
+        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1, exact=False, truncate=truncate)
+        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1, exact=False, truncate=truncate)
+        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0,  exact=False, truncate=truncate)
+        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0, exact=False, truncate=truncate)
 
         Ts = [Taup, Taum, Tauz, Taus]
-        if truncate:
-            for i in range(4):
-                Ts[i] = sph.triangular_truncate(Ts[i], Lout, Nout, Lout, Nout)
         Nlengths, Noffsets = coeff_sizes(Lout, Nout, truncate)
         taup1, taum1, tauz1, taus1 = tuple(hstack([T[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)]) for T in Ts)
         taup2, taum2, tauz2, taus2 = tuple(T[:,Noffsets[-2]:] for T in Ts)
@@ -412,17 +410,17 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, truncate):
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
-    truncate = False
+    truncate = True
 
     m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 45, 45, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 60, 60, 'all', None
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 

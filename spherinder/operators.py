@@ -218,6 +218,18 @@ def remove_zero_rows(mat):
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
 
 
+def Nsizes(Lmax, Nmax, truncate):
+    """Returns the number of radials coefficients for each vertical degree"""
+    if truncate:
+        _check_radial_degree(Lmax, Nmax)
+    return [Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)]
+
+
+def num_coeffs(Lmax, Nmax, truncate):
+    """Return the total number of coefficients for a field"""
+    return sum(Nsizes(Lmax, Nmax, truncate=truncate))
+
+
 def _check_radial_degree(Lmax, Nmax):
     if Nmax < Lmax//2:
         raise ValueError('Radial degree too small for triangular truncation')
@@ -414,6 +426,9 @@ class Conversion(Operator):
         Op2 = make_operator(zmat, smats, truncate=self.truncate)
  
         Op = Op1 + Op2
+        if self.truncate:
+            Op = resize(Op, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
+
         return Op.astype(self.dtype)
 
 
@@ -423,7 +438,7 @@ class RadialVector(Operator):
         codomain = [Codomain(0,+1,0), Codomain(0,0,0), Codomain(+1,+1,0)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
@@ -452,7 +467,7 @@ class RadialVector(Operator):
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
         Op = _hstack([Opp, Opm, Opz])
 
-        if self.truncate:
+        if self.truncate and not exact:
             Op = resize(Op, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
 
         return Op.astype(self.dtype)
@@ -460,14 +475,11 @@ class RadialVector(Operator):
 
 class RadialMultiplication(Operator):
     """Multiply a scalar field by the spherical radius vector"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, convert=True):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
         codomain = [Codomain(0,0,0), Codomain(0,+1,0), Codomain(+1,+1,0)] 
-        if convert:
-            codomain = [Conversion().codomain * cd for cd in codomain]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
-        self.convert = convert
 
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
@@ -495,11 +507,9 @@ class RadialMultiplication(Operator):
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
 
-        if self.convert:
-            conversion = Conversion(dtype=self.internal, internal=self.internal, truncate=self.truncate)
-            Opp = conversion(m, Lmax,   Nmax  , alpha=alpha, sigma=+1) @ Opp
-            Opm = conversion(m, Lmax,   Nmax+1, alpha=alpha, sigma=-1) @ Opm
-            Opz = conversion(m, Lmax+1, Nmax+1, alpha=alpha, sigma= 0) @ Opz
+        if self.truncate and not exact:
+            Opm = resize(Opm, Lmax,   Nmax+1, Lmax, Nmax, truncate=True)
+            Opz = resize(Opz, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
 
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
@@ -713,18 +723,22 @@ class ScalarLaplacian(Operator):
         Operator.__init__(self, codomain=Codomain(0,+1,+2), dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        if self.truncate:
-            raise ValueError('Noodling with resizing here broken for triangular truncation')
         kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
         divergence, gradient = Divergence(**kwargs), Gradient(**kwargs)
 
-        gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha)
-        gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1)
-        gradz = resize(gradz, Lmax-1, Nmax, Lmax, Nmax+1)
-        grad = sparse.vstack([gradp,gradm,gradz])
-        div = divergence(m, Lmax, Nmax+1, alpha+1)
-        dg = div @ grad
-        dg = resize(dg, Lmax, Nmax+2, Lmax, Nmax+1)
+        if self.truncate:
+            gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha)
+            grad = sparse.vstack([gradp,gradm,gradz])
+            div = divergence(m, Lmax, Nmax, alpha+1)
+            dg = div @ grad
+        else:
+            gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha)
+            gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1)
+            gradz = resize(gradz, Lmax-1, Nmax, Lmax, Nmax+1)
+            grad = sparse.vstack([gradp,gradm,gradz])
+            div = divergence(m, Lmax, Nmax+1, alpha+1)
+            dg = div @ grad
+            dg = resize(dg, Lmax, Nmax+2, Lmax, Nmax+1)
         return dg.astype(self.dtype)
 
 
@@ -734,9 +748,7 @@ class VectorLaplacian(Operator):
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        if self.truncate:
-            raise ValueError('Noodling with resizing here broken for triangular truncation')
-        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
+        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':False}
         divergence, gradient, curl = Divergence(**kwargs), Gradient(**kwargs), Curl(**kwargs)
 
         # Curl(Curl)
@@ -764,9 +776,18 @@ class VectorLaplacian(Operator):
 
         nin, nout = Lmax*Nmax, Lmax*(Nmax+2)
         Opp, Opm, Opz = op[:nout,:nin], op[nout:2*nout,nin:2*nin], op[2*nout:,2*nin:]
-        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nmax+1)
-        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nmax+1)
-        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nmax+1)
+
+        Nout = Nmax if self.truncate else Nmax+1
+        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nout)
+        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nout)
+        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nout)
+
+        if self.truncate:
+            # Fixme: this should be done without resizing
+            Opp = triangular_truncate(Opp, Lmax, Nmax)
+            Opm = triangular_truncate(Opm, Lmax, Nmax)
+            Opz = triangular_truncate(Opz, Lmax, Nmax)
+
         return Opp, Opm, Opz
 
 
@@ -801,14 +822,17 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     raise ValueError('Unknown operator')
 
 
-def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, exact, dtype='float64', internal=internal_dtype):
-    Conv = operator('conversion', dtype=internal, internal=internal, truncate=False)
-    op = sparse.eye(Lmax*Nmax, format='csr', dtype=internal)
+def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, exact, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate)
+
+    ncoeffs = np.sum([Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)])
+    op = sparse.eye(ncoeffs, format='csr', dtype=internal)
     for i in range(ntimes):
-        op1 = Conv(m, Lmax, Nmax+i, alpha=alpha+i, sigma=sigma)
+        op1 = Conv(m, Lmax, Nmax+(0 if truncate else i), alpha=alpha+i, sigma=sigma)
         op = op1 @ op
-    Ntrunc = Nmax+1 if exact else Nmax
-    op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc)
+    if not truncate:
+        Ntrunc = Nmax+1 if exact else Nmax
+        op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc)
     return op.astype(dtype)
     
 
