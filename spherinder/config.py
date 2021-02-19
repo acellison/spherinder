@@ -1,4 +1,4 @@
 internal_dtype = 'float128'
 max_processes = 16
-default_truncate = False
+default_truncate = True
 

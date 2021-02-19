@@ -17,9 +17,7 @@ class Basis():
         self.galerkin = galerkin
         self.parallel = parallel
         self.truncate = truncate
-
-        if truncate:
-            _check_radial_degree(Lmax, Nmax)
+        self.Nsizes = Nsizes(self.Lmax, self.Nmax, truncate=self.truncate)
 
         if not lazy:
             self._construct_basis()
@@ -29,23 +27,20 @@ class Basis():
 
     @property
     def ncoeffs(self):
-        Lmax, Nmax = self.Lmax, self.Nmax
-        if self.truncate:
-            return np.sum([Nmax-ell//2 for ell in range(Lmax)])
-        else:
-            return Lmax*Nmax
+        return num_coeffs(self.Lmax, self.Nmax, truncate=self.truncate)
+
 
     class _Constructor():
         """Helper object to parallelize basis construction"""
-        def __init__(self, Nmax, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype):
-            self.Nmax, self.m, self.sigma, self.alpha, self.beta = Nmax, m, sigma, alpha, beta
+        def __init__(self, Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype):
+            self.Nsizes, self.m, self.sigma, self.alpha, self.beta = Nsizes, m, sigma, alpha, beta
             self.truncate, self.internal, self.dtype = truncate, internal, dtype
             self.t, self.onept, self.onemt = t, onept, onemt
         def __call__(self, ell):
             m, sigma, alpha, beta = self.m, self.sigma, self.alpha, self.beta
             internal, dtype = self.internal, self.dtype
             t, onept, onemt = self.t, self.onept, self.onemt
-            N = self.Nmax - (ell//2 if self.truncate else 0)
+            N = self.Nsizes[ell]
             return ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
 
 
@@ -68,7 +63,7 @@ class Basis():
         # Construct the s basis
         onept = sscale * (1+t)**((m+sigma)/2)
         onemt = (1-t)**(1/2)
-        fun = Basis._Constructor(Nmax, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype)
+        fun = Basis._Constructor(self.Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype)
         if self.parallel:
             num_processes = min(mp.cpu_count(), max_processes)
             pool = mp.Pool(num_processes)
@@ -95,7 +90,7 @@ class Basis():
         Peta = self.etabasis
         index = 0
         for ell in range(self.Lmax):
-            N = self.Nmax - (ell//2 if self.truncate else 0)
+            N = self.Nsizes[ell]
             Ps = self.sbasis[ell]
             f += Peta[:,ell][:,np.newaxis] * (coeffs[index:index+N] @ Ps)
             index += N
@@ -106,7 +101,7 @@ class Basis():
         ell, k = index[0], index[1]
         if ell >= self.Lmax:
             raise ValueError('ell index out of range')
-        N = self.Nmax - (ell//2 if self.truncate else 0)
+        N = self.Nsizes[ell]
         if k >= N:
             raise ValueError('k index out of range')
 
@@ -135,25 +130,17 @@ def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', color
     fig.set_tight_layout(True)
 
 
-def resize(mat, Lin, Nin, Lout, Nout, truncate=False):
+def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
     """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
        This appends and deletes rows as necessary without touching the columns.
        Nin and Nout are functions of ell and return the number of radial coefficients
        for each vertical degree"""
     if np.isscalar(Nin):
-        ninvalue = Nin
-        if truncate:
-            Nin = lambda ell: ninvalue - ell//2
-        else:
-            Nin = lambda _: ninvalue
+        Nin = Nsizes(Lin, Nin, truncate=truncate, functor=True)
     nintotal = sum([Nin(ell) for ell in range(Lin)])
 
     if np.isscalar(Nout):
-        noutvalue = Nout
-        if truncate:
-            Nout = lambda ell: noutvalue - ell//2
-        else:
-            Nout = lambda _: noutvalue
+        Nout = Nsizes(Lout, Nout, truncate=truncate, functor=True)
     nouttotal = sum([Nout(ell) for ell in range(Lout)])
 
     nrows, ncols = np.shape(mat)
@@ -197,11 +184,13 @@ def triangular_truncate(mat, Lvar, Nvar, Leqn=None, Neqn=None):
     _check_radial_degree(Lvar, Nvar)
     _check_radial_degree(Leqn, Neqn)
 
+    nsizes = lambda L, N: Nsizes(L, N, truncate=True, functor=True)
+
     # truncate the equation space (output space)
-    mat = resize(mat, Leqn, Neqn, Leqn, lambda ell: Neqn-ell//2)
+    mat = resize(mat, Leqn, Neqn, Leqn, nsizes(Leqn, Neqn), truncate=False)
 
     # truncate the variable space (input space)
-    mat = resize(mat.T, Lvar, Nvar, Lvar, lambda ell: Nvar-ell//2).T
+    mat = resize(mat.T, Lvar, Nvar, Lvar, nsizes(Lvar, Nvar), truncate=False).T
 
     return mat
 
@@ -218,14 +207,18 @@ def remove_zero_rows(mat):
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
 
 
-def Nsizes(Lmax, Nmax, truncate):
+def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
     """Returns the number of radials coefficients for each vertical degree"""
     if truncate:
         _check_radial_degree(Lmax, Nmax)
-    return [Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)]
+    sizes = [Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)]
+    if functor:
+        return lambda ell: sizes[ell]
+    else:
+        return sizes
 
 
-def num_coeffs(Lmax, Nmax, truncate):
+def num_coeffs(Lmax, Nmax, truncate=default_truncate):
     """Return the total number of coefficients for a field"""
     return sum(Nsizes(Lmax, Nmax, truncate=truncate))
 
@@ -272,8 +265,8 @@ def make_operator(zmat, smats, Lmax=None, Nmax=None, truncate=False):
         smats = [pad(smats[ell], Nouts[ell]) for ell in range(len(smats))]
         Nout = Nmax
 
-    Nout_offsets = np.append(0, np.cumsum([Nout-(ell//2 if truncate else 0) for ell in range(Lout)]))
-    Nin_offsets = np.append(0, np.cumsum([Nin-(ell//2 if truncate else 0) for ell in range(Lin)]))
+    Nout_offsets = np.append(0, np.cumsum(Nsizes(Lout, Nout, truncate=truncate)))
+    Nin_offsets = np.append(0, np.cumsum(Nsizes(Lin, Nin, truncate=truncate)))
 
     # Construct the operator matrix
     oprows, opcols, opdata = [], [], []
@@ -469,7 +462,6 @@ class RadialVector(Operator):
 
         if self.truncate and not exact:
             Op = resize(Op, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
-
         return Op.astype(self.dtype)
 
 
@@ -510,7 +502,6 @@ class RadialMultiplication(Operator):
         if self.truncate and not exact:
             Opm = resize(Opm, Lmax,   Nmax+1, Lmax, Nmax, truncate=True)
             Opz = resize(Opz, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
-
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
 
@@ -733,12 +724,12 @@ class ScalarLaplacian(Operator):
             dg = div @ grad
         else:
             gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha)
-            gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1)
-            gradz = resize(gradz, Lmax-1, Nmax, Lmax, Nmax+1)
+            gradp = resize(gradp, Lmax, Nmax, Lmax, Nmax+1, truncate=False)
+            gradz = resize(gradz, Lmax-1, Nmax, Lmax, Nmax+1, truncate=False)
             grad = sparse.vstack([gradp,gradm,gradz])
             div = divergence(m, Lmax, Nmax+1, alpha+1)
             dg = div @ grad
-            dg = resize(dg, Lmax, Nmax+2, Lmax, Nmax+1)
+            dg = resize(dg, Lmax, Nmax+2, Lmax, Nmax+1, truncate=False)
         return dg.astype(self.dtype)
 
 
@@ -753,18 +744,18 @@ class VectorLaplacian(Operator):
 
         # Curl(Curl)
         curlp, curlm, curlz = curl(m, Lmax, Nmax, alpha)
-        curlp = resize(curlp, Lmax, Nmax, Lmax, Nmax+1)
+        curlp = resize(curlp, Lmax, Nmax, Lmax, Nmax+1, truncate=False)
         curl1 = sparse.vstack([curlp,curlm,curlz])
         curlp, curlm, curlz = curl(m, Lmax, Nmax+1, alpha+1)
-        curlp = resize(curlp, Lmax, Nmax+1, Lmax, Nmax+2)
+        curlp = resize(curlp, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
         curl2 = sparse.vstack([curlp,curlm,curlz])
         cc = (curl2 @ curl1).real
 
         # Grad(Div)
         div = divergence(m, Lmax, Nmax, alpha)
         gradp, gradm, gradz = gradient(m, Lmax, Nmax+1, alpha+1)
-        gradp = resize(gradp, Lmax, Nmax+1, Lmax, Nmax+2)
-        gradz = resize(gradz, Lmax-1, Nmax+1, Lmax, Nmax+2)
+        gradp = resize(gradp, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
+        gradz = resize(gradz, Lmax-1, Nmax+1, Lmax, Nmax+2, truncate=False)
         grad = sparse.vstack([gradp,gradm,gradz])
         gd = grad @ div
 
@@ -778,9 +769,9 @@ class VectorLaplacian(Operator):
         Opp, Opm, Opz = op[:nout,:nin], op[nout:2*nout,nin:2*nin], op[2*nout:,2*nin:]
 
         Nout = Nmax if self.truncate else Nmax+1
-        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nout)
-        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nout)
-        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nout)
+        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nout, truncate=False)
+        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nout, truncate=False)
+        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nout, truncate=False)
 
         if self.truncate:
             # Fixme: this should be done without resizing
@@ -822,17 +813,17 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     raise ValueError('Unknown operator')
 
 
-def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, exact, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal=internal_dtype, truncate=default_truncate, exact=True):
     Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate)
 
-    ncoeffs = np.sum([Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)])
+    ncoeffs = sum(Nsizes(Lmax, Nmax, truncate=truncate))
     op = sparse.eye(ncoeffs, format='csr', dtype=internal)
     for i in range(ntimes):
         op1 = Conv(m, Lmax, Nmax+(0 if truncate else i), alpha=alpha+i, sigma=sigma)
         op = op1 @ op
     if not truncate:
         Ntrunc = Nmax+1 if exact else Nmax
-        op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc)
+        op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc, truncate=False)
     return op.astype(dtype)
     
 
@@ -840,7 +831,8 @@ def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=in
     A = Jacobi.operator('A', dtype=internal)
 
     zmat = sparse.eye(Lmax)
-    smats = [(A(+1)**beta)(Nmax - (ell//2 if truncate else 0),ell+alpha-beta+1/2,m+sigma) for ell in range(Lmax)]
+    nsize = Nsizes(Lmax, Nmax, truncate=truncate)
+    smats = [(A(+1)**beta)(nsize[ell],ell+alpha-beta+1/2,m+sigma) for ell in range(Lmax)]
     op = make_operator(zmat, smats, truncate=truncate)
     return op.astype(dtype)
 

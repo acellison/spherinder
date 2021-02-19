@@ -22,38 +22,24 @@ from fileio import save_data, save_figure, plotspy
 g_file_prefix = 'spherinder_inertial_waves'
 
 
-def matrices(m, Lmax, Nmax, boundary_method, truncate):
+def matrices(m, Lmax, Nmax, boundary_method):
     """Construct matrices for X = [i*u(+), i*u(-), i*u(z), p]"""
-    alpha_bc_p = 0    # tau polynomial basis in u(+) equation, no greater than 1
-    alpha_bc_z = 0    # tau polynomial basis in u(z) equation, no greater than 1
-    alpha_bc_div = 1  # tau polynomial basis in div equation, no greater than 2
-    beta_bc_p = 1     # tau polynomial basis shift, no greater than 1
-    beta_bc_z = 0     # tau polynomial basis shift, no greater than 1
-    beta_bc_div = 0   # tau polynomial basis shift, no greater than 2
+    alpha_bc = 0
 
-    ncoeff = sum([Nmax-ell//2 for ell in range(Lmax)]) if truncate else Lmax*Nmax
+    ncoeff = sum(sph.Nsizes(Lmax, Nmax))
     Zero = sparse.lil_matrix((ncoeff,ncoeff))
     I = sparse.eye(ncoeff)
 
     # Scalar gradient operators
-    Gradp, Gradm, Gradz = sph.operator('grad', truncate=truncate)(m, Lmax, Nmax, alpha=0)
-    if not truncate:
-        Gradm = sph.resize(Gradm, Lmax, Nmax+1, Lmax, Nmax)  # truncate e(-)^* . Gradp(p)
-        Gradz = sph.resize(Gradz, Lmax-1, Nmax, Lmax, Nmax)  # pad
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=0)
 
     # Vector divergence operator
-    Div = sph.operator('div', truncate=truncate)(m, Lmax, Nmax, alpha=1)
-    if not truncate:
-        Div = sph.resize(Div, Lmax, Nmax+1, Lmax, Nmax)      # truncate Div . e(+)^* . u
+    Div = sph.operator('div')(m, Lmax, Nmax, alpha=1)
     Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
 
     # Boundary condition
-    Rad = sph.operator('rdot', dtype='float128', truncate=truncate)(m, Lmax, Nmax, alpha=1)
-    if truncate:
-        Lout, Nout = Lmax, Nmax
-    else:
-        Lout, Nout = Lmax+1, Nmax+1
-    Boundary = sph.operator('boundary', dtype='float128', internal='float128', truncate=truncate)(m, Lout, Nout, alpha=1, sigma=0)
+    Rad = sph.operator('rdot', dtype='float128')(m, Lmax, Nmax, alpha=1)
+    Boundary = sph.operator('boundary', dtype='float128', internal='float128')(m, Lmax, Nmax, alpha=1, sigma=0)
     Bound = Boundary @ Rad
     Bound = sph.remove_zero_rows(Bound).astype('float64')
 
@@ -99,67 +85,23 @@ def matrices(m, Lmax, Nmax, boundary_method, truncate):
     L = sparse.bmat([upmats, ummats, uzmats, pmats], format=sparse_format)
 
     # Boundary conditions
-    def impenetrable_full():
-        ntau = np.shape(Bound)[0]
-        npressure = np.sum([Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)])
-        row = sparse.hstack([Bound, sparse.lil_matrix((ntau,npressure))])
-
-        # Tau contribution in the final ell coefficients
-        if beta_bc_z > 0:
-            Convz1 = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=0, beta=beta_bc_z)
-        else:
-            Convz1 = sph.convert_alpha(1-alpha_bc_z, m, Lmax, Nmax, alpha=alpha_bc_z, sigma=0, exact=False)
-
-        if beta_bc_div > 0:
-            Convz2 = sph.convert_beta(m, Lmax, Nmax, alpha=2, sigma=0, beta=beta_bc_div)
-        else:
-            Convz2 = sph.convert_alpha(2-alpha_bc_div, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, exact=False)
-
-        conv1, conv2 = Convz1[:,-Nmax:], Convz2[:,-Nmax:]
-        col1 = sparse.bmat([[0*conv1,0*conv2],
-                            [0*conv1,0*conv2],
-                            [  conv1,0*conv2],
-                            [0*conv1,  conv2]])
-
-        # Tau contribution in final radial coefficient
-        whichtau = (0,)
-        if beta_bc_p > 0:
-            Convp = sph.convert_beta(m, Lmax, Nmax, alpha=1, sigma=+1, beta=beta_bc_p)
-        else:
-            Convp = sph.convert_alpha(1-alpha_bc_p, m, Lmax, Nmax, alpha=alpha_bc_p, sigma=+1, exact=False)
-        col2 = Convp[:,Nmax-1::Nmax]
-        col2 = sparse.vstack([col2,0*col2,0*col2,0*col2])
-
-        col = sparse.hstack([col1,col2])
-        return row, col
-
-    def impenetrable_truncate():
-        Nlengths = [Nmax-(ell//2 if truncate else 0) for ell in range(Lmax)]
+    def impenetrable():
+        Nlengths = sph.Nsizes(Lmax, Nmax)
         Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
 
         ntau, npressure = np.shape(Bound)[0], np.sum(Nlengths)
         row = sparse.hstack([Bound, sparse.lil_matrix((ntau,npressure))])
 
-        whichtau = 0
-        alpha_bc = 0
-
-        Conv0 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1, exact=False)
-        Conv1 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=-1, exact=False)
-        Conv2 = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0, exact=False)
-        Conv3 = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc_div, sigma=0, exact=False)
-        Convs = [Conv0, Conv1, Conv2, Conv3]
-        Conv = sph.triangular_truncate(Convs[whichtau], Lmax, Nmax, Lmax, Nmax)
-
+        Conv = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1)
         col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
         col2 = Conv[:,Noffsets[-2]:]
         col = sparse.hstack([col1,col2])
-
-        col = sparse.vstack([(i==whichtau)*col for i in range(4)])
+        col = sparse.vstack([(i==0)*col for i in range(4)])
 
         return row, col
 
     # Create the boundary condition rows and tau columns
-    row, col = impenetrable_truncate() if truncate else impenetrable_full()
+    row, col = impenetrable()
 
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
     L = sparse.bmat([[  L, col],
@@ -178,18 +120,18 @@ def filename_prefix(directory='data'):
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
-def pickle_filename(m, Lmax, Nmax, boundary_method, truncate, directory='data'):
-    truncstr = '-truncate' if truncate else ''
+def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data'):
+    truncstr = '-truncated'
     return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{truncstr}.pckl'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, plot_spy):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy):
     # Construct the system
-    M, L = matrices(m, Lmax, Nmax, boundary_method, truncate)
+    M, L = matrices(m, Lmax, Nmax, boundary_method)
 
     if plot_spy:
         fig, plot_axes = plotspy(L, M)
-        truncstr = '-truncated' if truncate else ''
+        truncstr = '-truncated'
         filename = filename_prefix('figures') + f'-m={m}-Lmax={Lmax}-Nmax={Nmax}{truncstr}-spy.png'
         save_figure(filename, fig)
         plt.show()
@@ -201,9 +143,9 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, plot_spy):
 
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
-            'boundary_method': boundary_method, 'truncated': truncate,
+            'boundary_method': boundary_method,
             'evalues': evalues, 'evectors': evectors}
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
     save_data(filename, data)
 
 
@@ -277,7 +219,7 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     save_plots = True
     if m > 30:
         n = m+61
@@ -287,7 +229,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_f
     modes = list(zip([n]*num_modes, range(num_modes)))
 
     # Load the data
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -298,7 +240,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_f
     else:
         def save(fn, fig): pass
 
-    truncstr = '-truncated' if truncate else ''
+    truncstr = '-truncated'
     configstr = f'm={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{truncstr}'
     prefix = filename_prefix('figures')
 
@@ -319,10 +261,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_f
     # Construct the bases
     ns, neta = 256, 257
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
-    bases = {'up': sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1, truncate=truncate),
-             'um': sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1, truncate=truncate),
-             'uz': sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=1, truncate=truncate),
-             'p':  sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0, truncate=truncate)}
+    bases = {'up': sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1),
+             'um': sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1),
+             'uz': sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=1),
+             'p':  sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0)}
 
     evalues, evectors = evalues[indices], evectors[:,indices]
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, bases)
@@ -416,7 +358,7 @@ def analyze_resolution():
     for i,Lmax in enumerate(Lmax_values):
         for j,Nmax in enumerate(Nmax_values):
             # Load the data
-            filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate)
+            filename = pickle_filename(m, Lmax, Nmax, boundary_method)
             data = pickle.load(open(filename, 'rb'))
             evalues, evectors = data['evalues'], data['evectors']
 
@@ -455,24 +397,23 @@ def analyze_resolution():
     plt.show()
 
 
-def _solve_helper(m, Lmax, Nmax, truncate):
+def _solve_helper(m, Lmax, Nmax):
     boundary_method = 'tau'
 
     # Skip if we already have it
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method, truncate, truncate)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
     if os.path.exists(filename):
         print('  Already solved')
         return
 
-    solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, plot_spy=False)
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy=False)
 
 
 def solve():
     m_values = [30]
     Lmax_values = [10,14,18,22,26,30]
     Nmax_values = [12,16,20,24,28,32,36,40,44,48,52,56,60]
-    truncate = [True]
-    configs = itertools.product(m_values,Lmax_values,Nmax_values,truncate)
+    configs = itertools.product(m_values,Lmax_values,Nmax_values)
 
     pool = mp.Pool(mp.cpu_count()-1)
     pool.starmap(_solve_helper, configs)
@@ -485,18 +426,17 @@ def main():
     plot_spy = False
 
     m = 95
-    Lmax, Nmax = 32, 32
+    Lmax, Nmax = 12, 32
     boundary_method = 'tau'
-    truncate = True
 
     print(f'Inertial Waves, m = {m}')
-    print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}, Truncate = {truncate}')
+    print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
 
     if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, truncate, plot_spy)
+        solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, truncate, plot_evalues, plot_fields)
+        plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields)
         plt.show()
 
 
