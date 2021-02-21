@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
+from spherinder import config
+config.default_truncate = False
+
 import spherinder.operators as sph
 from fileio import save_figure
 
@@ -145,7 +148,7 @@ def radial_operators():
     fig, ax = plt.subplots(1,3,figsize=(9,3))
     
     # r e_r sparsity structure
-    operator = sph.RadialMultiplication(convert=False)
+    operator = sph.RadialMultiplication()
     codomain = [cd(Lmax,Nmax,alpha) for cd in operator.codomain]
     Op = operator(m,Lmax,Nmax,alpha)
     plot_splatter(r'$\mathcal{R}$   $(r e_r)$', Op, codomain, ax=ax[0])
@@ -160,9 +163,9 @@ def radial_operators():
     # 1-r**2 sparsity structure
     operator = sph.operator('1-r**2')
     codomain = operator.codomain(Lmax,Nmax,alpha)
-    Op = operator(m,Lmax,Nmax,alpha=1,sigma=0)
+    Op = operator(m,Lmax,Nmax,alpha=1,sigma=0,exact=True)
     plot_splatter(r'$\mathcal{S}$   $\left(1-r^2\right)$', Op, codomain, ax=ax[2])
-    
+
     filename = output_filename('figures', ext='.png', prefix='radial_ops')
     save_figure(filename, fig)
 
