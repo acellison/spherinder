@@ -37,9 +37,9 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     ncoeffp = sph.num_coeffs(Lp, Np)
     
     # Galerkin conversion operators
-    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
-    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
-    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
+    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1, exact=True)
+    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1, exact=True)
+    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0,  exact=True)
 
     # Vector laplacian
     Lapp, Lapm, Lapz = sph.operator('lap', 'vec')(m, Lout, Nout, alpha=1)

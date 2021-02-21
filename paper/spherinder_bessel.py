@@ -79,7 +79,7 @@ def matrices_galerkin(m, Lmax, Nmax):
     L = sph.operator('laplacian')(m, Lout, Nout, alpha=0)
 
     # Multiplication by 1-r**2 lowers alpha by 1
-    Bound = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0)
+    Bound = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1, sigma=0, exact=True)
 
     M = M @ Bound
     L = L @ Bound

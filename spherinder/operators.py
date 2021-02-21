@@ -511,7 +511,7 @@ class OneMinusRadiusSquared(Operator):
         codomain = Codomain(+2,+1,-1)
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
-    def __call__(self, m, Lmax, Nmax, alpha, sigma):
+    def __call__(self, m, Lmax, Nmax, alpha, sigma, exact=False):
         make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
 
         A, B = self.A, self.B
@@ -527,6 +527,8 @@ class OneMinusRadiusSquared(Operator):
 
         Op = 1/2*(Op1 + Op2)
 
+        if self.truncate and not exact:
+            Op = resize(Op, Lmax+2, Nmax+1, Lmax, Nmax, truncate=True)
         return Op.astype(self.dtype)
 
 

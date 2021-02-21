@@ -30,10 +30,10 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     ncoeff0 = sph.num_coeffs(Lmax, Nmax)
 
     # Galerkin conversion operators
-    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1)
-    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1)
-    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0)
-    BoundT = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1+g_alpha_T, sigma=0)
+    Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1, exact=True)
+    Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1, exact=True)
+    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0,  exact=True)
+    BoundT = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=1+g_alpha_T, sigma=0, exact=True)
 
     # Scalar laplacian
     LapT = sph.operator('lap')(m, Lout, Nout, alpha=g_alpha_T)
@@ -404,7 +404,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
 
 
 def rotation_configs():
-    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 14, 'Nmax': 40},
+    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 10, 'Nmax': 20},
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 60, 'Nmax': 40},
             {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 40, 'Nmax': 40},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 100, 'Nmax': 60},
