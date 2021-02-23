@@ -344,7 +344,11 @@ class Conversion(Operator):
     """Convert up in alpha index.  This isn't really a tensor operation since it can
        act independently on components of vectors"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        Operator.__init__(self, codomain=Codomain(0,+1,+1), dtype=dtype, internal=internal, truncate=truncate)
+        if truncate:
+            codomain = Codomain(0,0,+1)
+        else:
+            codomain = Codomain(0,+1,+1)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
@@ -598,7 +602,11 @@ class Curl(Operator):
 
 class ScalarLaplacian(Operator):
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        Operator.__init__(self, codomain=Codomain(0,+1,+2), dtype=dtype, internal=internal, truncate=truncate)
+        if truncate:
+            codomain = Codomain(0,0,+2)
+        else:
+            codomain = Codomain(0,+1,+2)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha):
         kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
