@@ -177,24 +177,6 @@ def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
     return result
 
 
-def triangular_truncate(mat, Lvar, Nvar, Leqn=None, Neqn=None):
-    if Leqn is None: Leqn = Lvar
-    if Neqn is None: Neqn = Nvar
-
-    _check_radial_degree(Lvar, Nvar)
-    _check_radial_degree(Leqn, Neqn)
-
-    nsizes = lambda L, N: Nsizes(L, N, truncate=True, functor=True)
-
-    # truncate the equation space (output space)
-    mat = resize(mat, Leqn, Neqn, Leqn, nsizes(Leqn, Neqn), truncate=False)
-
-    # truncate the variable space (input space)
-    mat = resize(mat.T, Lvar, Nvar, Lvar, nsizes(Lvar, Nvar), truncate=False).T
-
-    return mat
-
-
 def remove_zero_rows(mat):
     rows, cols = mat.nonzero()
     zrows = list(set(range(np.shape(mat)[0])) - set(rows))
@@ -232,61 +214,32 @@ def _hstack(*args, **kwargs):
     return sparse.hstack(*args, **kwargs, format='csr')
 
 
-def _widest_dtype(zmat, smats):
-    z = np.zeros(1,dtype=zmat.dtype)
-    for smat in smats:
-        if np.isscalar(smat):
-            z = z+0*smat
-        else:
-            z = z+np.zeros(1,dtype=smat.dtype)
-    return z.dtype
+def make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0, truncate=default_truncate):
+    """Kronecker the operator, always triangular truncating"""
+    Nin_sizes = Nsizes(Lmax, Nmax, truncate=truncate)
+    Nout_sizes = Nsizes(Lmax+Lpad, Nmax+Npad, truncate=truncate)
+    Nin_offsets = np.append(0, np.cumsum(Nin_sizes))
+    Nout_offsets = np.append(0, np.cumsum(Nout_sizes))
 
-
-def make_operator(zmat, smats, Lmax=None, Nmax=None, truncate=False):
-    """Kronecker out an operator.  Since the radial operators depend on ell,
-       we require a separate operator matrix for each vertical expansion coefficient."""
-    def pad(mat,n):
-        if np.isscalar(mat): return mat
-        return mat[:n,:]
-    def shape(mat):
-        return (0,0) if np.isscalar(mat) else np.shape(mat)
-
-    zmat = operators.infinite_csr(zmat)
-    Lout, Lin = np.shape(zmat)
-    if Lmax is not None:
-        Lout = Lmax
-        zmat = pad(zmat, Lout)
-
-    Nouts, Nins = zip(*tuple(shape(smat) for smat in smats))
-    Nout, Nin = max(Nouts), max(Nins)
-    if Nmax is not None and Nmax != Nout:
-        dn = Nmax-Nout
-        Nouts = [N+dn for N in Nouts]
-        smats = [pad(smats[ell], Nouts[ell]) for ell in range(len(smats))]
-        Nout = Nmax
-
-    Nout_offsets = np.append(0, np.cumsum(Nsizes(Lout, Nout, truncate=truncate)))
-    Nin_offsets = np.append(0, np.cumsum(Nsizes(Lin, Nin, truncate=truncate)))
-
-    # Construct the operator matrix
     oprows, opcols, opdata = [], [], []
-    rows, cols = zmat.nonzero()
-    for row, col in zip(rows, cols):
-        value = zmat[row,col]
-        if not np.isscalar(value):
-            value = value.todense()[0,0]
-        if np.abs(value) < 1e-15:
-            continue
+    if dell < 0:
+        ellmin = -dell
+        ellmax = Lmax + min(Lpad, -dell)
+    else:
+        ellmin = 0
+        ellmax = Lmax - dell
+    for i in range(ellmin, ellmax):
+        ellin, ellout = i+dell, i
+        Nin, Nout = Nin_sizes[ellin], Nout_sizes[ellout]
+        smat = sop(Nin, ellin+alpha+1/2, m+sigma)[:Nout,:]
+        mat = sparse.csr_matrix(zop[ellin-max(dell,0)] * smat)
 
-        mat = sparse.csr_matrix(value * smats[col])
         matrows, matcols = mat.nonzero()
-        oprows += (Nout_offsets[row] + matrows).tolist()
-        opcols += (Nin_offsets[col] + matcols).tolist()
+        oprows += (Nout_offsets[ellout] + matrows).tolist()
+        opcols += (Nin_offsets[ellin] + matcols).tolist()
         opdata += np.asarray(mat[matrows,matcols]).ravel().tolist()
 
-    dtype = _widest_dtype(zmat, smats)
-    op = sparse.csr_matrix((opdata, (oprows, opcols)), shape=(Nout_offsets[-1],Nin_offsets[-1]), dtype=dtype)
-    return op
+    return sparse.csr_matrix((opdata, (oprows, opcols)), shape=(Nout_offsets[-1],Nin_offsets[-1]))
 
 
 class Codomain():
@@ -350,15 +303,6 @@ class Operator():
     def codomain(self):
         return self._codomain
 
-    def _make_s_op(self, expr, m, Lmax, Nmax, alpha, sigma):
-        # Fixme: could do some codomain checking here
-        return [expr(self.n_for_ell(Nmax, ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
-
-    def _bind_s_op(self, m, Lmax, Nmax, alpha):
-        def fun(expr, sigma=0, ell_shift=0):
-            return self._make_s_op(expr, m, Lmax+ell_shift, Nmax, alpha, sigma)
-        return fun
-
 
 class Boundary(Operator):
     """Evaluate a field on the ball boundary"""
@@ -403,25 +347,19 @@ class Conversion(Operator):
         Operator.__init__(self, codomain=Codomain(0,+1,+1), dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        def make_op(dell, zop, sop, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B = self.A, self.B
-        opz = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
-        gamma_ell = np.diag(opz)
-        delta_ell = np.diag(opz,2)
+        opz = (A(+1) @ B(+1))(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
+        gamma_ell = opz.diagonal(0)
+        delta_ell = opz.diagonal(2)
  
-        zmat = np.diag(gamma_ell)
-        smats = make_s_op(A(+1), sigma=sigma)              # (n,a,b) -> (n,a+1,b)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
- 
-        zmat = np.diag(delta_ell,2)
-        smats = make_s_op(A(-1), sigma=sigma)              # (n,a,b) -> (n+1,a-1,b)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Npad = 0 if self.truncate else 1
+        Op1 = make_op(dell=0, zop=gamma_ell, sop=A(+1), Npad=Npad)  # (n,a,b) -> (n,a+1,b)
+        Op2 = make_op(dell=2, zop=delta_ell, sop=A(-1), Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
  
         Op = Op1 + Op2
-        if self.truncate:
-            Op = resize(Op, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
-
         return Op.astype(self.dtype)
 
 
@@ -432,36 +370,35 @@ class RadialVector(Operator):
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
+        Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
 
         # Coeff space operator: s * u(+)
-        zmat = Id(Lmax,alpha,alpha)
-        smats = make_s_op(B(-1), sigma=+1)                                      # (n,a,b) -> (n+1,a,b-1)
-        Opp = 1/2 * make_operator(zmat, smats, Nmax=Nmax+1, Lmax=Lmax+1, truncate=self.truncate)
+        zop = np.ones(Lmax)
+        sop = B(-1)                                      # (n,a,b) -> (n+1,a,b-1)
+        Opp = 1/2 * make_op(dell=0, zop=zop, sop=sop, sigma=+1, Npad=Npad, Lpad=Lpad)
  
         # Coeff space operator: s * u(-)
-        zmat = Id(Lmax,alpha,alpha)
-        smats = make_s_op(B(+1), sigma=-1)                                      # (n,a,b) -> (n,a,b+1)
-        Opm = 1/2 * make_operator(zmat, smats, Nmax=Nmax+1, Lmax=Lmax+1, truncate=self.truncate)
+        zop = np.ones(Lmax)
+        sop = B(+1)                                      # (n,a,b) -> (n,a,b+1)
+        Opm = 1/2 * make_op(dell=0, zop=zop, sop=sop, sigma=-1, Npad=Npad, Lpad=Lpad)
  
         # Coeff space operator: z * w = eta * (1-s**2)**0.5 * w
-        opz = Z(Lmax,alpha,alpha).todense()                                     # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
+        opz = Z(Lmax,alpha,alpha)                        # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
  
-        zmat = np.diag(np.diag(opz,-1),-1)[:,:Lmax]
-        smats = make_s_op(A(+1), sigma=0)                                       # (n,a,b) -> (n,a+1,b)
-        Opz1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
+        zop = opz.diagonal(-1)
+        sop = A(+1)                                      # (n,a,b) -> (n,a+1,b)
+        Opz1 = make_op(dell=-1, zop=zop, sop=sop, sigma=0, Lpad=Lpad, Npad=Npad)
  
-        zmat = np.diag(np.diag(opz,+1),+1)
-        smats = [0] + make_s_op(A(-1), sigma=0, ell_shift=1)[1:]                # (n,a,b) -> (n+1,a-1,b)
-        Opz2 = make_operator(zmat, smats, Lmax=Lmax+1, truncate=self.truncate)
+        zop = opz.diagonal(+1)
+        sop = A(-1)                                      # (n,a,b) -> (n+1,a-1,b)
+        Opz2 = make_op(dell=+1, zop=zop, sop=sop, sigma=0, Lpad=Lpad, Npad=Npad)
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
         Op = _hstack([Opp, Opm, Opz])
-
-        if self.truncate and not exact:
-            Op = resize(Op, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
         return Op.astype(self.dtype)
 
 
@@ -472,36 +409,36 @@ class RadialMultiplication(Operator):
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        # Fixme: implement exact flag
+        sigma = 0
+        def make_op(dell, zop, sop, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
+        Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
 
         # u(+) operator
-        zmat = Id(Lmax,alpha,alpha)
-        smats = make_s_op(B(+1), sigma=0)                          # (n,a,b) -> (n,a,b+1)
-        Opp = 1/2 * make_operator(zmat, smats, truncate=self.truncate)
+        zop = np.ones(Lmax)
+        sop = B(+1)                          # (n,a,b) -> (n,a,b+1)
+        Opp = 1/2 * make_op(dell=0, zop=zop, sop=sop)
 
         # u(-) operator
-        zmat = Id(Lmax,alpha,alpha)
-        smats = make_s_op(B(-1), sigma=0)                          # (n,a,b) -> (n+1,a,b-1)
-        Opm = 1/2 * make_operator(zmat, smats, truncate=self.truncate)
+        zop = np.ones(Lmax)
+        sop = B(-1)                          # (n,a,b) -> (n+1,a,b-1)
+        Opm = 1/2 * make_op(dell=0, zop=zop, sop=sop, Npad=Npad)
 
         # u(z) operator
-        opz = Z(Lmax,alpha,alpha).todense()                        # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
+        opz = Z(Lmax,alpha,alpha)            # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
+        zop = opz.diagonal(-1)
+        sop = A(+1)                          # (n,a,b) -> (n,a+1,b)
+        Opz1 = make_op(dell=-1, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
 
-        zmat = np.diag(np.diag(opz,-1),-1)[:,:Lmax]
-        smats = make_s_op(A(+1), sigma=0)                          # (n,a,b) -> (n,a+1,b)
-        Opz1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-
-        zmat = np.diag(np.diag(opz,+1),+1)
-        smats = [0] + make_s_op(A(-1), sigma=0, ell_shift=1)[1:]   # (n,a,b) -> (n+1,a-1,b)
-        Opz2 = make_operator(zmat, smats, Lmax=Lmax+1, truncate=self.truncate)
+        zop = opz.diagonal(+1)
+        sop = A(-1)                          # (n,a,b) -> (n+1,a-1,b)
+        Opz2 = make_op(dell=+1, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
 
-        if self.truncate and not exact:
-            Opm = resize(Opm, Lmax,   Nmax+1, Lmax, Nmax, truncate=True)
-            Opz = resize(Opz, Lmax+1, Nmax+1, Lmax, Nmax, truncate=True)
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
 
@@ -512,197 +449,145 @@ class OneMinusRadiusSquared(Operator):
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma, exact=False):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        def make_op(dell, zop, sop, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B = self.A, self.B
+        Lpad, Npad = (2,1) if (not self.truncate or exact) else (0,0)
 
-        opz = (A(-1) @ B(-1))(Lmax,alpha,alpha).todense()
-        zmat = np.diag(np.diag(opz))
-        smats = make_s_op(A(-1), sigma=sigma)          # (n,a,b) -> (n+1,a-1,b)
-        Op1 = make_operator(zmat, smats, Lmax=Lmax+2, truncate=self.truncate)
+        opz = (A(-1) @ B(-1))(Lmax,alpha,alpha)
+        zop = opz.diagonal(0)
+        sop = A(-1)          # (n,a,b) -> (n+1,a-1,b)
+        Op1 = make_op(dell=0, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
 
-        zmat = np.diag(np.diag(opz,-2),-2)[:,:Lmax]
-        smats = make_s_op(A(+1), sigma=sigma)          # (n,a,b) -> (n,a+1,b)
-        Op2 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
+        zop = opz.diagonal(-2)
+        sop = A(+1)          # (n,a,b) -> (n,a+1,b)
+        Op2 = make_op(dell=-2, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
 
         Op = 1/2*(Op1 + Op2)
-
-        if self.truncate and not exact:
-            Op = resize(Op, Lmax+2, Nmax+1, Lmax, Nmax, truncate=True)
-        return Op.astype(self.dtype)
-
-
-class RdR(Operator):
-    """r d/dr operator on a field"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        Operator.__init__(self, codomain=Codomain(0,+1,+1), dtype=dtype, internal=internal, truncate=truncate)
-
-    def __call__(self, m, Lmax, Nmax, alpha, sigma):
-        # Fixme: just cascade rdot with gradient for implementation
-        A, B, C, D = self.A, self.B, self.C, self.D
-
-        op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-        gamma_ell, delta_ell = np.diag(op), -np.diag(op,2)
-
-        N = lambda ell: self.n_for_ell(Nmax, ell)
-
-        zmat = np.diag(gamma_ell)
-        smats = [((ell-(m+sigma))*A(+1) + 2*(B(+1) @ C(+1)))(N(ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-
-        zmat = np.diag(delta_ell,2)
-        smats = [((ell+2*alpha+1+m+sigma)*A(-1) + 2*(B(+1) @ D(-1)))(N(ell), ell+alpha+1/2, m+sigma) for ell in range(Lmax)]
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
-
-        Op = Op1 + Op2
-
         return Op.astype(self.dtype)
 
 
 class Gradient(Operator):
     """Compute the gradient of a scalar field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(-1,0,+1)]
+        if truncate:
+            codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
+        else:
+            codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(-1,0,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        sigma = 0
+        def make_op(dell, zop, sop, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
 
-        op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()
-        gamma_ell = np.diag(op)
-        delta_ell = -np.diag(op,2)
+        op = (A(+1) @ B(+1))(Lmax,alpha,alpha)
+        gamma_ell =  op.diagonal(0)
+        delta_ell = -op.diagonal(2)
     
         # e(+)^* . Grad
-        zmat = np.diag(2*gamma_ell)
-        smats = make_s_op(D(+1), sigma=0)            # (n,a,b) -> (n-1,a+1,b+1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax, truncate=self.truncate)
-        zmat = np.diag(2*delta_ell,2)
-        smats = make_s_op(C(-1), sigma=0)            # (n,a,b) -> (n,a-1,b+1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=D(+1))  # (n,a,b) -> (n-1,a+1,b+1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=C(-1))  # (n,a,b) -> (n,a-1,b+1)
         Opp = Op1 + Op2
     
         # e(-)^* . Grad
-        zmat = np.diag(2*gamma_ell)
-        smats = make_s_op(C(+1), sigma=0)            # (n,a,b) -> (n,a+1,b-1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = np.diag(2*delta_ell,2)
-        smats = make_s_op(D(-1), sigma=0)            # (n,a,b) -> (n+1,a-1,b-1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Npad = 0 if self.truncate else 1
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=C(+1), Npad=Npad)  # (n,a,b) -> (n,a+1,b-1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=D(-1), Npad=Npad)  # (n,a,b) -> (n+1,a-1,b-1)
         Opm = Op1 + Op2
 
         # e(z)^* . Grad
+        Lpad = 0 if self.truncate else -1
         zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
-        smats = make_s_op(Id, sigma=0)
-        Opz = make_operator(zmat, smats, truncate=self.truncate)
+        Opz = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, Lpad=Lpad)
 
-        if self.truncate:
-            Opm = resize(Opm, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
-            Opz = resize(Opz, Lmax-1, Nmax, Lmax, Nmax, truncate=True)
         return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
 
 
 class Divergence(Operator):
     """Compute the divergence of a vector field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        codomain = [Codomain(0,+1,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
+        if truncate:
+            codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
+        else:
+            codomain = [Codomain(0,+1,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
      
     def __call__(self, m, Lmax, Nmax, alpha):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
+        Npad = 0 if self.truncate else 1
 
-        op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
-        gamma_ell = np.diag(op)
-        delta_ell = -np.diag(op,2)
+        op = (A(+1) @ B(+1))(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
+        gamma_ell =  op.diagonal(0)
+        delta_ell = -op.diagonal(2)
    
         # Div . e(+)^* .
-        zmat = np.diag(2*gamma_ell)
-        smats = make_s_op(C(+1), sigma=+1)                # (n,a,b) -> (n,a+1,b-1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = np.diag(2*delta_ell,2)
-        smats = make_s_op(D(-1), sigma=+1)                # (n,a,b) -> (n+1,a-1,b-1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=C(+1), sigma=+1, Npad=Npad)  # (n,a,b) -> (n,a+1,b-1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=D(-1), sigma=+1, Npad=Npad)  # (n,a,b) -> (n+1,a-1,b-1)
         Opp = Op1 + Op2
 
         # Div . e(-)^* . 
-        zmat = np.diag(2*gamma_ell)
-        smats = make_s_op(D(+1), sigma=-1)                # (n,a,b) -> (n-1,a+1,b+1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = np.diag(2*delta_ell,2)
-        smats = make_s_op(C(-1), sigma=-1)                # (n,a,b) -> (n,a-1,b+1)
-        Op2 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=D(+1), sigma=-1, Npad=Npad)  # (n,a,b) -> (n-1,a+1,b+1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=C(-1), sigma=-1, Npad=Npad)  # (n,a,b) -> (n,a-1,b+1)
         Opm = Op1 + Op2
  
         # Div . e(z)^* .
         zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)       # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
-        smats = make_s_op(Id, sigma=0)
-        Opz = make_operator(zmat, smats, Lmax=Lmax, Nmax=Nmax+1, truncate=self.truncate)
-
+        Opz = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, sigma=0, Npad=Npad)
+ 
         Op = _hstack([Opp, Opm, Opz])
-        if self.truncate:
-            Op = resize(Op, Lmax, Nmax+1, Lmax, Nmax, truncate=True)
         return Op.astype(self.dtype)
 
 
 class Curl(Operator):
     """Compute the divergence of a vector field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(0,+1,+1)]
+        if truncate:
+            codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(0,0,+1)]
+        else:
+            codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(0,+1,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
      
     def __call__(self, m, Lmax, Nmax, alpha):
-        make_s_op = self._bind_s_op(m, Lmax, Nmax, alpha)
+        def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
+            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
+        Lpad, Npad = (0,0) if self.truncate else (1,1)
 
-        op = (A(+1) @ B(+1))(Lmax,alpha,alpha).todense()  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
-        gamma_ell = np.diag(op)
-        delta_ell = -np.diag(op,2)
+        op = (A(+1) @ B(+1))(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
+        gamma_ell =  op.diagonal(0)
+        delta_ell = -op.diagonal(2)
 
         # e(+)^* . Curl
-        zmat = 1 * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)   # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
-        smats = make_s_op(Id, sigma=+1)
-        Opp_p = make_operator(zmat, smats, Lmax=Lmax, truncate=self.truncate)
+        zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)   # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
+        Opp_p = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, sigma=+1)
 
-        zmat = -2 * np.diag(gamma_ell)
-        smats = make_s_op(D(+1), sigma=0)                 # (n,a,b) -> (n-1,a+1,b+1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax, truncate=self.truncate)
-        zmat = -2 * np.diag(delta_ell,2)
-        smats = make_s_op(C(-1), sigma=0)                 # (n,a,b) -> (n,a-1,b+1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=-2*gamma_ell, sop=D(+1), sigma=0)  # (n,a,b) -> (n-1,a+1,b+1)
+        Op2 = make_op(dell=2, zop=-2*delta_ell, sop=C(-1), sigma=0)  # (n,a,b) -> (n,a-1,b+1)
         Opp_z = Op1 + Op2
 
         # e(-)^* . Curl
-        zmat = -1 * np.sqrt(2) * D(+1)(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
-        smats = make_s_op(Id, sigma=-1)
-        Opm_m = make_operator(zmat, smats, Lmax=Lmax, Nmax=Nmax+1, truncate=self.truncate)
+        zmat = -np.sqrt(2) * D(+1)(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
+        Opm_m = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, sigma=-1, Npad=Npad)
 
-        zmat = 2 * np.diag(gamma_ell)
-        smats = make_s_op(C(+1), sigma=0)                 # (n,a,b) -> (n,a+1,b-1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = 2 * np.diag(delta_ell,2)
-        smats = make_s_op(D(-1), sigma=0)                 # (n,a,b) -> (n+1,a-1,b-1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=C(+1), sigma=0, Npad=Npad)  # (n,a,b) -> (n,a+1,b-1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=D(-1), sigma=0, Npad=Npad)  # (n,a,b) -> (n+1,a-1,b-1)
         Opm_z = Op1 + Op2
 
         # e(z)^* . Curl
-        zmat = -2 * np.diag(gamma_ell)
-        smats = make_s_op(C(+1), sigma=+1)                # (n,a,b) -> (n,a+1,b-1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = -2 * np.diag(delta_ell,2)
-        smats = make_s_op(D(-1), sigma=+1)                # (n,a,b) -> (n+1,a-1,b-1)
-        Op2 = make_operator(zmat, smats, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=-2*gamma_ell, sop=C(+1), sigma=+1, Npad=Npad)  # (n,a,b) -> (n,a+1,b-1)
+        Op2 = make_op(dell=2, zop=-2*delta_ell, sop=D(-1), sigma=+1, Npad=Npad)  # (n,a,b) -> (n+1,a-1,b-1)
         Opz_p = Op1 + Op2
 
-        zmat = 2 * np.diag(gamma_ell)
-        smats = make_s_op(D(+1), sigma=-1)                # (n,a,b) -> (n-1,a+1,b+1)
-        Op1 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
-        zmat = 2 * np.diag(delta_ell,2)
-        smats = make_s_op(C(-1), sigma=-1)                # (n,a,b) -> (n,a-1,b+1)
-        Op2 = make_operator(zmat, smats, Nmax=Nmax+1, truncate=self.truncate)
+        Op1 = make_op(dell=0, zop=2*gamma_ell, sop=D(+1), sigma=-1, Npad=Npad)  # (n,a,b) -> (n-1,a+1,b+1)
+        Op2 = make_op(dell=2, zop=2*delta_ell, sop=C(-1), sigma=-1, Npad=Npad)  # (n,a,b) -> (n,a-1,b+1)
         Opz_m = Op1 + Op2
 
         Zp, Zm, Zz = 0*Opp_p, 0*Opm_m, 0*Opz_p
@@ -737,49 +622,62 @@ class ScalarLaplacian(Operator):
 
 class VectorLaplacian(Operator):
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        codomain = [Codomain(0,+1,+2), Codomain(0,+1,+2), Codomain(0,+1,+2)]
+        if truncate:
+            codomain = [Codomain(0,0,+2), Codomain(0,0,+2), Codomain(0,0,+2)]
+        else:
+            codomain = [Codomain(0,+1,+2), Codomain(0,+1,+2), Codomain(0,+1,+2)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':False}
+        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
         divergence, gradient, curl = Divergence(**kwargs), Gradient(**kwargs), Curl(**kwargs)
 
-        # Curl(Curl)
-        curlp, curlm, curlz = curl(m, Lmax, Nmax, alpha)
-        curlp = resize(curlp, Lmax, Nmax, Lmax, Nmax+1, truncate=False)
-        curl1 = sparse.vstack([curlp,curlm,curlz])
-        curlp, curlm, curlz = curl(m, Lmax, Nmax+1, alpha+1)
-        curlp = resize(curlp, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
-        curl2 = sparse.vstack([curlp,curlm,curlz])
-        cc = (curl2 @ curl1).real
+        if self.truncate:
+            # Curl(Curl)
+            curlp1, curlm1, curlz1 = curl(m, Lmax, Nmax, alpha)
+            curlp2, curlm2, curlz2 = curl(m, Lmax, Nmax, alpha+1)
 
-        # Grad(Div)
-        div = divergence(m, Lmax, Nmax, alpha)
-        gradp, gradm, gradz = gradient(m, Lmax, Nmax+1, alpha+1)
-        gradp = resize(gradp, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
-        gradz = resize(gradz, Lmax-1, Nmax+1, Lmax, Nmax+2, truncate=False)
+            # Grad(Div)
+            div = divergence(m, Lmax, Nmax, alpha)
+            gradp, gradm, gradz = gradient(m, Lmax, Nmax, alpha+1)
+
+        else:
+            # Curl(Curl)
+            curlp1, curlm1, curlz1 = curl(m, Lmax, Nmax, alpha)
+            curlp1 = resize(curlp1, Lmax, Nmax, Lmax, Nmax+1, truncate=False)
+            curlp2, curlm2, curlz2 = curl(m, Lmax, Nmax+1, alpha+1)
+            curlp2 = resize(curlp2, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
+
+            # Grad(Div)
+            div = divergence(m, Lmax, Nmax, alpha)
+            gradp, gradm, gradz = gradient(m, Lmax, Nmax+1, alpha+1)
+            gradp = resize(gradp, Lmax, Nmax+1, Lmax, Nmax+2, truncate=False)
+            gradz = resize(gradz, Lmax-1, Nmax+1, Lmax, Nmax+2, truncate=False)
+
+        # Stack the operators
+        curl1 = sparse.vstack([curlp1,curlm1,curlz1])
+        curl2 = sparse.vstack([curlp2,curlm2,curlz2])
         grad = sparse.vstack([gradp,gradm,gradz])
-        gd = grad @ div
 
         # Vector Laplacian
+        cc = (curl2 @ curl1).real
+        gd = grad @ div
         op = gd - cc
+
+        # Prune entries near zero
         rows, cols, _ = sparse.find(abs(op) >= 1e-12)
         values = [op[r,c] for r,c in zip(rows, cols)]
         op = sparse.csr_matrix((values,(rows,cols)), shape=np.shape(op)).astype(self.dtype)
 
-        nin, nout = Lmax*Nmax, Lmax*(Nmax+2)
+        # Extract sub-operators
+        nin = num_coeffs(Lmax, Nmax, truncate=self.truncate)
+        nout = num_coeffs(Lmax, Nmax+(0 if self.truncate else 2), truncate=self.truncate)
         Opp, Opm, Opz = op[:nout,:nin], op[nout:2*nout,nin:2*nin], op[2*nout:,2*nin:]
 
-        Nout = Nmax if self.truncate else Nmax+1
-        Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nout, truncate=False)
-        Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nout, truncate=False)
-        Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nout, truncate=False)
-
-        if self.truncate:
-            # Fixme: this should be done without resizing
-            Opp = triangular_truncate(Opp, Lmax, Nmax)
-            Opm = triangular_truncate(Opm, Lmax, Nmax)
-            Opz = triangular_truncate(Opz, Lmax, Nmax)
+        if not self.truncate:
+            Opp = resize(Opp, Lmax, Nmax+2, Lmax, Nmax+1, truncate=False)
+            Opm = resize(Opm, Lmax, Nmax+2, Lmax, Nmax+1, truncate=False)
+            Opz = resize(Opz, Lmax, Nmax+2, Lmax, Nmax+1, truncate=False)
 
         return Opp, Opm, Opz
 
@@ -805,8 +703,6 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
         return dispatch(OneMinusRadiusSquared)
     if name == 'rdot':
         return dispatch(RadialVector)
-    if name == 'r*d/dr':
-        return dispatch(RdR)
     if name in ['boundary', 'r=1']:
         return dispatch(Boundary)
     if name == 'conversion':
@@ -830,11 +726,9 @@ def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal
     
 
 def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    zop = np.ones(Lmax)
     A = Jacobi.operator('A', dtype=internal)
-
-    zmat = sparse.eye(Lmax)
-    nsize = Nsizes(Lmax, Nmax, truncate=truncate)
-    smats = [(A(+1)**beta)(nsize[ell],ell+alpha-beta+1/2,m+sigma) for ell in range(Lmax)]
-    op = make_operator(zmat, smats, truncate=truncate)
+    sop = lambda n,a,b: (A(+1)**beta)(n,a-beta,b)
+    op = make_operator(dell=0, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, truncate=truncate)
     return op.astype(dtype)
 
