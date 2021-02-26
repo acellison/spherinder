@@ -187,6 +187,7 @@ def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
 
 
 def remove_zero_rows(mat):
+    """Chuck any identically-zero rows from the matrix"""
     rows, cols = mat.nonzero()
     zrows = list(set(range(np.shape(mat)[0])) - set(rows))
     if not zrows:
@@ -198,14 +199,15 @@ def remove_zero_rows(mat):
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
 
 
-def eliminate_zeros(op, tol=0.):
+def eliminate_zeros(mat, tol=0.):
+    """Prune zeros (or small values when tol is nonzero) from the sparse matrix"""
     if tol <= 0:
-        op.eliminate_zeros()
-        return op
-    op = op.tocsr()
-    rows, cols, _ = sparse.find(abs(op) >= tol)
-    values = [op[r,c] for r,c in zip(rows, cols)]
-    return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(op))
+        mat.eliminate_zeros()
+        return mat
+    mat = mat.tocsr()
+    rows, cols, _ = sparse.find(abs(mat) >= tol)
+    values = [mat[r,c] for r,c in zip(rows, cols)]
+    return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(mat))
 
 
 def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
@@ -239,7 +241,7 @@ def _hstack(*args, **kwargs):
 
 
 def make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0, truncate=default_truncate):
-    """Kronecker the operator, always triangular truncating"""
+    """Kronecker the operator in the eta and s directions"""
     Nin_sizes = Nsizes(Lmax, Nmax, truncate=truncate)
     Nout_sizes = Nsizes(Lmax+Lpad, Nmax+Npad, truncate=truncate)
     Nin_offsets = np.append(0, np.cumsum(Nin_sizes))
@@ -381,12 +383,10 @@ class Conversion(Operator):
 
         A, B = self.A, self.B
         opz = (A(+1) @ B(+1))(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
-        gamma_ell = opz.diagonal(0)
-        delta_ell = opz.diagonal(2)
  
         Npad = 0 if self.truncate else 1
-        Op1 = make_op(dell=0, zop=gamma_ell, sop=A(+1), Npad=Npad)  # (n,a,b) -> (n,a+1,b)
-        Op2 = make_op(dell=2, zop=delta_ell, sop=A(-1), Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
+        Op1 = make_op(dell=0, zop=opz.diagonal(0), sop=A(+1), Npad=Npad)  # (n,a,b) -> (n,a+1,b)
+        Op2 = make_op(dell=2, zop=opz.diagonal(2), sop=A(-1), Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
  
         Op = Op1 + Op2
 
@@ -408,25 +408,15 @@ class RadialVector(Operator):
         Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
 
         # Coeff space operator: s * u(+)
-        zop = np.ones(Lmax)
-        sop = B(-1)                                      # (n,a,b) -> (n+1,a,b-1)
-        Opp = 1/2 * make_op(dell=0, zop=zop, sop=sop, sigma=+1, Npad=Npad, Lpad=Lpad)
+        Opp = 1/2 * make_op(dell=0, zop=np.ones(Lmax), sop=B(-1), sigma=+1, Npad=Npad, Lpad=Lpad)  # (n,a,b) -> (n+1,a,b-1)
  
         # Coeff space operator: s * u(-)
-        zop = np.ones(Lmax)
-        sop = B(+1)                                      # (n,a,b) -> (n,a,b+1)
-        Opm = 1/2 * make_op(dell=0, zop=zop, sop=sop, sigma=-1, Npad=Npad, Lpad=Lpad)
+        Opm = 1/2 * make_op(dell=0, zop=np.ones(Lmax), sop=B(+1), sigma=-1, Npad=Npad, Lpad=Lpad)  # (n,a,b) -> (n,a,b+1)
  
         # Coeff space operator: z * w = eta * (1-s**2)**0.5 * w
         opz = Z(Lmax,alpha,alpha)                        # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
- 
-        zop = opz.diagonal(-1)
-        sop = A(+1)                                      # (n,a,b) -> (n,a+1,b)
-        Opz1 = make_op(dell=-1, zop=zop, sop=sop, sigma=0, Lpad=Lpad, Npad=Npad)
- 
-        zop = opz.diagonal(+1)
-        sop = A(-1)                                      # (n,a,b) -> (n+1,a-1,b)
-        Opz2 = make_op(dell=+1, zop=zop, sop=sop, sigma=0, Lpad=Lpad, Npad=Npad)
+        Opz1 = make_op(dell=-1, zop=opz.diagonal(-1), sop=A(+1), sigma=0, Lpad=Lpad, Npad=Npad)  # (n,a,b) -> (n,a+1,b)
+        Opz2 = make_op(dell=+1, zop=opz.diagonal(+1), sop=A(-1), sigma=0, Lpad=Lpad, Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
         Op = _hstack([Opp, Opm, Opz])
@@ -449,24 +439,15 @@ class RadialMultiplication(Operator):
         Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
 
         # u(+) operator
-        zop = np.ones(Lmax)
-        sop = B(+1)                          # (n,a,b) -> (n,a,b+1)
-        Opp = 1/2 * make_op(dell=0, zop=zop, sop=sop)
+        Opp = 1/2 * make_op(dell=0, zop=np.ones(Lmax), sop=B(+1))  # (n,a,b) -> (n,a,b+1)
 
         # u(-) operator
-        zop = np.ones(Lmax)
-        sop = B(-1)                          # (n,a,b) -> (n+1,a,b-1)
-        Opm = 1/2 * make_op(dell=0, zop=zop, sop=sop, Npad=Npad)
+        Opm = 1/2 * make_op(dell=0, zop=np.ones(Lmax), sop=B(-1), Npad=Npad)  # (n,a,b) -> (n+1,a,b-1)
 
         # u(z) operator
         opz = Z(Lmax,alpha,alpha)            # (ell,alpha,alpha) -> (ell+1,alpha,alpha)
-        zop = opz.diagonal(-1)
-        sop = A(+1)                          # (n,a,b) -> (n,a+1,b)
-        Opz1 = make_op(dell=-1, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
-
-        zop = opz.diagonal(+1)
-        sop = A(-1)                          # (n,a,b) -> (n+1,a-1,b)
-        Opz2 = make_op(dell=+1, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
+        Opz1 = make_op(dell=-1, zop=opz.diagonal(-1), sop=A(+1), Lpad=Lpad, Npad=Npad)  # (n,a,b) -> (n,a+1,b)
+        Opz2 = make_op(dell=+1, zop=opz.diagonal(+1), sop=A(-1), Lpad=Lpad, Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
 
         Opz = 1/np.sqrt(2) * (Opz1 + Opz2)
 
@@ -487,13 +468,8 @@ class OneMinusRadiusSquared(Operator):
         Lpad, Npad = (2,1) if (not self.truncate or exact) else (0,0)
 
         opz = (A(-1) @ B(-1))(Lmax,alpha,alpha)
-        zop = opz.diagonal(0)
-        sop = A(-1)          # (n,a,b) -> (n+1,a-1,b)
-        Op1 = make_op(dell=0, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
-
-        zop = opz.diagonal(-2)
-        sop = A(+1)          # (n,a,b) -> (n,a+1,b)
-        Op2 = make_op(dell=-2, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
+        Op1 = make_op(dell=0,  zop=opz.diagonal(0),  sop=A(-1), Lpad=Lpad, Npad=Npad)    # (n,a,b) -> (n+1,a-1,b)
+        Op2 = make_op(dell=-2, zop=opz.diagonal(-2), sop=A(+1), Lpad=Lpad, Npad=Npad)  # (n,a,b) -> (n,a+1,b)
 
         Op = 1/2*(Op1 + Op2)
 
