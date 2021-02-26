@@ -10,9 +10,8 @@ import pickle
 
 import greenspan_inertial_waves as greenspan
 
-internal_dtype = 'float128'
 from spherinder import config
-config.internal_dtype = internal_dtype
+config.default_normalize = False
 
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum
@@ -426,7 +425,7 @@ def main():
     plot_spy = False
 
     m = 95
-    Lmax, Nmax = 12, 32
+    Lmax, Nmax = 12, 64
     boundary_method = 'tau'
 
     print(f'Inertial Waves, m = {m}')

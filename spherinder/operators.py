@@ -198,6 +198,16 @@ def remove_zero_rows(mat):
     return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
 
 
+def eliminate_zeros(op, tol=0.):
+    if tol <= 0:
+        op.eliminate_zeros()
+        return op
+    op = op.tocsr()
+    rows, cols, _ = sparse.find(abs(op) >= tol)
+    values = [op[r,c] for r,c in zip(rows, cols)]
+    return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(op))
+
+
 def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
     """Returns the number of radials coefficients for each vertical degree"""
     if truncate:
