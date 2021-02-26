@@ -5,11 +5,12 @@ import multiprocessing as mp
 
 from dedalus_sphere import jacobi as Jacobi
 from dedalus_sphere import operators
-from .config import internal_dtype, max_processes, default_truncate
+from .config import internal_dtype, max_processes, default_truncate, default_normalize
 
 
 class Basis():
-    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, truncate=default_truncate, dtype='float64', internal='float128', lazy=True, parallel=False):
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, truncate=default_truncate, normalize=default_normalize,
+                 dtype='float64', internal='float128', lazy=True, parallel=False):
         self.s, self.eta = s, eta
         self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
         self.sigma, self.alpha, self.beta = sigma, alpha, beta
@@ -17,6 +18,7 @@ class Basis():
         self.galerkin = galerkin
         self.parallel = parallel
         self.truncate = truncate
+        self.normalize = normalize
         self.Nsizes = Nsizes(self.Lmax, self.Nmax, truncate=self.truncate)
 
         if not lazy:
@@ -30,18 +32,25 @@ class Basis():
         return num_coeffs(self.Lmax, self.Nmax, truncate=self.truncate)
 
 
+    @property
+    def norm_scale(self):
+        """Scale factor in t direction for normalization"""
+        return np.sqrt(2**(2+self.alpha+1/2)) if self.normalize else 1.
+
+
     class _Constructor():
         """Helper object to parallelize basis construction"""
-        def __init__(self, Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype):
+        def __init__(self, Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, normscale, internal, dtype):
             self.Nsizes, self.m, self.sigma, self.alpha, self.beta = Nsizes, m, sigma, alpha, beta
-            self.truncate, self.internal, self.dtype = truncate, internal, dtype
+            self.truncate, self.normscale, self.internal, self.dtype = truncate, normscale, internal, dtype
             self.t, self.onept, self.onemt = t, onept, onemt
         def __call__(self, ell):
             m, sigma, alpha, beta = self.m, self.sigma, self.alpha, self.beta
             internal, dtype = self.internal, self.dtype
             t, onept, onemt = self.t, self.onept, self.onemt
             N = self.Nsizes[ell]
-            return ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
+            scale = self.normscale
+            return scale * ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
 
 
     def _construct_basis(self):
@@ -63,7 +72,7 @@ class Basis():
         # Construct the s basis
         onept = sscale * (1+t)**((m+sigma)/2)
         onemt = (1-t)**(1/2)
-        fun = Basis._Constructor(self.Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, internal, dtype)
+        fun = Basis._Constructor(self.Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, self.norm_scale, internal, dtype)
         if self.parallel:
             num_processes = min(mp.cpu_count(), max_processes)
             pool = mp.Pool(num_processes)
@@ -205,6 +214,11 @@ def num_coeffs(Lmax, Nmax, truncate=default_truncate):
     return sum(Nsizes(Lmax, Nmax, truncate=truncate))
 
 
+def norm_ratio(dalpha, normalize=default_normalize):
+    """Ratio of basis normalization scale factor for a change in alpha"""
+    return 2**(dalpha/2) if normalize else 1
+
+
 def _check_radial_degree(Lmax, Nmax):
     if Nmax < Lmax//2:
         raise ValueError('Radial degree too small for triangular truncation')
@@ -277,7 +291,7 @@ class Codomain():
 
 
 class Operator():
-    def __init__(self, codomain, dtype, internal, truncate):
+    def __init__(self, codomain, dtype, internal, truncate, normalize):
         self._codomain = codomain
 
         if (np.zeros(1,dtype=dtype) + np.zeros(1,dtype=internal)).dtype == np.zeros(1,dtype=dtype).dtype:
@@ -286,6 +300,7 @@ class Operator():
         self.dtype = dtype
         self.internal = internal
         self.truncate = truncate
+        self.normalize = normalize
 
         self.A = Jacobi.operator('A', dtype=internal)
         self.B = Jacobi.operator('B', dtype=internal)
@@ -306,8 +321,8 @@ class Operator():
 
 class Boundary(Operator):
     """Evaluate a field on the ball boundary"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-        Operator.__init__(self, codomain=None, dtype=dtype, internal=internal, truncate=truncate)
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
+        Operator.__init__(self, codomain=None, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def codomain(self, m, Lmax, Nmax, alpha, sigma):
         L = Lmax-1
@@ -343,12 +358,12 @@ class Boundary(Operator):
 class Conversion(Operator):
     """Convert up in alpha index.  This isn't really a tensor operation since it can
        act independently on components of vectors"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = Codomain(0,0,+1)
         else:
             codomain = Codomain(0,+1,+1)
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
@@ -364,14 +379,16 @@ class Conversion(Operator):
         Op2 = make_op(dell=2, zop=delta_ell, sop=A(-1), Npad=Npad)  # (n,a,b) -> (n+1,a-1,b)
  
         Op = Op1 + Op2
-        return Op.astype(self.dtype)
+
+        scale = norm_ratio(dalpha=+1, normalize=self.normalize)
+        return (scale * Op).astype(self.dtype)
 
 
 class RadialVector(Operator):
     """Extract the spherical radial part of a velocity field"""   
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         codomain = [Codomain(0,+1,0), Codomain(0,0,0), Codomain(+1,+1,0)]
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
@@ -408,9 +425,9 @@ class RadialVector(Operator):
 
 class RadialMultiplication(Operator):
     """Multiply a scalar field by the spherical radius vector"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         codomain = [Codomain(0,0,0), Codomain(0,+1,0), Codomain(+1,+1,0)] 
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         # Fixme: implement exact flag
@@ -448,9 +465,9 @@ class RadialMultiplication(Operator):
 
 class OneMinusRadiusSquared(Operator):
     """Multiply a field by (1-r**2)"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         codomain = Codomain(+2,+1,-1)
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma, exact=False):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
@@ -469,17 +486,19 @@ class OneMinusRadiusSquared(Operator):
         Op2 = make_op(dell=-2, zop=zop, sop=sop, Lpad=Lpad, Npad=Npad)
 
         Op = 1/2*(Op1 + Op2)
-        return Op.astype(self.dtype)
+
+        scale = norm_ratio(dalpha=-1, normalize=self.normalize)
+        return (scale * Op).astype(self.dtype)
 
 
 class Gradient(Operator):
     """Compute the gradient of a scalar field"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
         else:
             codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(-1,0,+1)]
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha):
         sigma = 0
@@ -508,17 +527,20 @@ class Gradient(Operator):
         zmat = np.sqrt(2) * D(+1)(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell-1,alpha+1,alpha+1)
         Opz = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, Lpad=Lpad)
 
-        return Opp.astype(self.dtype), Opm.astype(self.dtype), Opz.astype(self.dtype)
+        scale = norm_ratio(dalpha=+1, normalize=self.normalize)
+        return (scale * Opp).astype(self.dtype), \
+               (scale * Opm).astype(self.dtype), \
+               (scale * Opz).astype(self.dtype)
 
 
 class Divergence(Operator):
     """Compute the divergence of a vector field"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
         else:
             codomain = [Codomain(0,+1,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
      
     def __call__(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
@@ -546,17 +568,19 @@ class Divergence(Operator):
         Opz = make_op(dell=1, zop=zmat.diagonal(1), sop=Id, sigma=0, Npad=Npad)
  
         Op = _hstack([Opp, Opm, Opz])
-        return Op.astype(self.dtype)
+
+        scale = norm_ratio(dalpha=+1, normalize=self.normalize)
+        return (scale * Op).astype(self.dtype)
 
 
 class Curl(Operator):
     """Compute the divergence of a vector field"""
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = [Codomain(0,0,+1), Codomain(0,0,+1), Codomain(0,0,+1)]
         else:
             codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(0,+1,+1)]
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
      
     def __call__(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
@@ -595,21 +619,23 @@ class Curl(Operator):
         Opz_m = Op1 + Op2
 
         Zp, Zm, Zz = 0*Opp_p, 0*Opm_m, 0*Opz_p
-        return 1j*(_hstack([Opp_p, Zp, Opp_z]).astype(self.dtype)), \
-               1j*(_hstack([Zm, Opm_m, Opm_z]).astype(self.dtype)), \
-               1j*(_hstack([Opz_p, Opz_m, Zz]).astype(self.dtype))
+
+        scale = norm_ratio(dalpha=+1, normalize=self.normalize)
+        return 1j*((scale * _hstack([Opp_p, Zp, Opp_z])).astype(self.dtype)), \
+               1j*((scale * _hstack([Zm, Opm_m, Opm_z])).astype(self.dtype)), \
+               1j*((scale * _hstack([Opz_p, Opz_m, Zz])).astype(self.dtype))
 
 
 class ScalarLaplacian(Operator):
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = Codomain(0,0,+2)
         else:
             codomain = Codomain(0,+1,+2)
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
+        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate, 'normalize':self.normalize}
         divergence, gradient = Divergence(**kwargs), Gradient(**kwargs)
 
         if self.truncate:
@@ -629,15 +655,15 @@ class ScalarLaplacian(Operator):
 
 
 class VectorLaplacian(Operator):
-    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = [Codomain(0,0,+2), Codomain(0,0,+2), Codomain(0,0,+2)]
         else:
             codomain = [Codomain(0,+1,+2), Codomain(0,+1,+2), Codomain(0,+1,+2)]
-        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate)
+        Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha):
-        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate}
+        kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate, 'normalize':self.normalize}
         divergence, gradient, curl = Divergence(**kwargs), Gradient(**kwargs), Curl(**kwargs)
 
         if self.truncate:
@@ -690,8 +716,8 @@ class VectorLaplacian(Operator):
         return Opp, Opm, Opz
 
 
-def operator(name, field=None, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-    dispatch = lambda klass: klass(dtype=dtype, internal=internal, truncate=truncate)
+def operator(name, field=None, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
+    dispatch = lambda klass: klass(dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     if name in ['divergence', 'div']:
         return dispatch(Divergence)
@@ -719,8 +745,8 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     raise ValueError('Unknown operator')
 
 
-def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal=internal_dtype, truncate=default_truncate, exact=True):
-    Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate)
+def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize, exact=True):
+    Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate, normalize=normalize)
 
     ncoeffs = sum(Nsizes(Lmax, Nmax, truncate=truncate))
     op = sparse.eye(ncoeffs, format='csr', dtype=internal)
