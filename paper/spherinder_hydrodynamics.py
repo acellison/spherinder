@@ -13,16 +13,15 @@ from fileio import save_data, save_figure
 g_file_prefix = 'spherinder_hydrodynamics'
 
 
-def coeff_sizes(Lmax, Nmax):
-    lengths = sph.Nsizes(Lmax, Nmax)
-    offsets = np.append(0, np.cumsum(lengths)[:-1])
-    return lengths, offsets
-
-
 use_extended_pressure = False
+use_full_vertical_velocity = False
 
 def pressure_size(Lmax, Nmax, full=use_extended_pressure):
     return (Lmax+2, Nmax+1) if full else (Lmax, Nmax)
+
+
+def vertical_velocity_size(Lmax, Nmax, full=use_full_vertical_velocity):
+    return (Lmax, Nmax) if full else (Lmax-1, Nmax)
 
 
 def matrices_galerkin(m, Lmax, Nmax, Ekman):
@@ -32,14 +31,18 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
 
     Lout, Nout = Lmax+2, Nmax+1
     Lp, Np = pressure_size(Lmax, Nmax)
+    Lw, Nw = vertical_velocity_size(Lmax, Nmax)
+    Loutw, Noutw = Lw+2, Nw+1
     ncoeff = sph.num_coeffs(Lout, Nout)
     ncoeff0 = sph.num_coeffs(Lmax, Nmax)
     ncoeffp = sph.num_coeffs(Lp, Np)
+    ncoeffw = sph.num_coeffs(Lw, Nw)
+    ncoutw = sph.num_coeffs(Loutw, Noutw)
     
     # Galerkin conversion operators
     Boundp = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=+1, exact=True)
     Boundm = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=-1, exact=True)
-    Boundz = sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=0,  exact=True)
+    Boundz = sph.operator('1-r**2')(m, Lw,   Nw,   alpha=2, sigma=0,  exact=True)
 
     # Vector laplacian
     Lapp, Lapm, Lapz = sph.operator('lap', 'vec')(m, Lout, Nout, alpha=1)
@@ -48,18 +51,23 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     Div = sph.operator('div')(m, Lout, Nout, alpha=1)
     Divp, Divm, Divz = Div[:,:ncoeff], Div[:,ncoeff:2*ncoeff], Div[:,2*ncoeff:]
 
+    if not use_full_vertical_velocity:
+        _, Noffsets = sph.coeff_sizes(Lout, Nout)
+        Lapz = Lapz[:Noffsets[-1],:Noffsets[-1]]
+        Divz = Divz[:,:Noffsets[-1]]
+
     # Pressure gradient
     Gradp, Gradm, Gradz = sph.operator('grad')(m, Lp, Np, alpha=2)
 
     # Pad the pressure gradient to fit the Galerkin coefficient sizes
-    Gradp = sph.resize(Gradp, Lp, Np, Lout, Nout)
-    Gradm = sph.resize(Gradm, Lp, Np, Lout, Nout)
-    Gradz = sph.resize(Gradz, Lp, Np, Lout, Nout)
+    Gradp = sph.resize(Gradp, Lp, Np, Lout,  Nout)
+    Gradm = sph.resize(Gradm, Lp, Np, Lout,  Nout)
+    Gradz = sph.resize(Gradz, Lp, Np, Loutw, Noutw)
 
     # Conversion matrices
-    Cp = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=+1,)
-    Cm = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=-1,)
-    Cz = sph.convert_alpha(2, m, Lout, Nout, alpha=1, sigma=0)
+    Cp = sph.convert_alpha(2, m, Lout,  Nout,  alpha=1, sigma=+1,)
+    Cm = sph.convert_alpha(2, m, Lout,  Nout,  alpha=1, sigma=-1,)
+    Cz = sph.convert_alpha(2, m, Loutw, Noutw, alpha=1, sigma=0)
     
     # Time derivative matrices
     M00 = Cp @ Boundp
@@ -70,18 +78,18 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     # i*u+ equation - spin+ velocity component
     L00 = (-2j * Cp + Ekman * Lapp) @ Boundp
     L01 = sparse.lil_matrix((ncoeff,ncoeff0))
-    L02 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L02 = sparse.lil_matrix((ncoeff,ncoeffw))
     L03 = -Gradp
 
     # i*u- equation - spin- velocity component
     L10 = sparse.lil_matrix((ncoeff,ncoeff0))
     L11 = (2j * Cm + Ekman * Lapm) @ Boundm
-    L12 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L12 = sparse.lil_matrix((ncoeff,ncoeffw))
     L13 = -Gradm
 
     # i*w equation - vertical velocity component
-    L20 = sparse.lil_matrix((ncoeff,ncoeff0))
-    L21 = sparse.lil_matrix((ncoeff,ncoeff0))
+    L20 = sparse.lil_matrix((ncoutw,ncoeff0))
+    L21 = sparse.lil_matrix((ncoutw,ncoeff0))
     L22 = Ekman * Lapz @ Boundz
     L23 = -Gradz
 
@@ -111,23 +119,14 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
                                     [0*a,0*c,  d]])
         else:
             def make_tau_column(a,b,c,d):
-                return sparse.bmat([[  a,0*b,0*c,0*d],
-                                    [0*a,  b,0*c,0*d],
-                                    [0*a,0*b,  c,0*d],
-                                    [0*a,0*b,0*c,  d]])
-        hstack = sparse.hstack
+                return sparse.block_diag([a,b,c,d])
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0)
+        Taup = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=+1, alpha_bc=alpha_bc)
+        Taum = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=-1, alpha_bc=alpha_bc)
+        Tauz = sph.tau_projection(m, Loutw, Noutw, alpha=3, sigma=0,  alpha_bc=alpha_bc)
+        Taus = sph.tau_projection(m, Lout,  Nout,  alpha=2, sigma=0,  alpha_bc=alpha_bc_s)
 
-        Ts = [Taup, Taum, Tauz, Taus]
-        Nlengths, Noffsets = coeff_sizes(Lout, Nout)
-        taup1, taum1, tauz1, taus1 = tuple(hstack([T[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)]) for T in Ts)
-        taup2, taum2, tauz2, taus2 = tuple(T[:,Noffsets[-2]:] for T in Ts)
- 
-        col = make_tau_column(hstack([taup1,taup2]), hstack([taum1,taum2]), hstack([tauz1,tauz2]), hstack([taus1,taus2]))
+        col = make_tau_column(Taup, Taum, Tauz, Taus)
         return col
 
     col = tau_polynomials()
@@ -230,14 +229,13 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
         galerkin = True
         dalpha = 1
         Lp, Np = pressure_size(Lmax, Nmax)
+        Lw, Nw = vertical_velocity_size(Lmax, Nmax)
     else:
-        galerkin = False
-        dalpha = 0
-        Lp, Np = Lmax, Nmax
+        raise ValueError('Boundary method not implemented')
 
     upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
     umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
-    uzbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
+    uzbasis = sph.Basis(s, eta, m, Lw, Nw, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
     pbasis  = sph.Basis(s, eta, m, Lp, Np, sigma=0,  alpha=2, galerkin=False)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis}
 
@@ -400,30 +398,31 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
 
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 45, 45, 'all', None
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 60, 60, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 20, 40, 1000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
     print(f'  Boundary method = {boundary_method}')
     print(f'  Extended pressure coefficients = {use_extended_pressure}')
+    print(f'  Full vertical velocity coefficients = {use_full_vertical_velocity}')
 
     if solve:
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-#        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields)
-        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman)
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields)
+#        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman)
         plt.show()
 
 

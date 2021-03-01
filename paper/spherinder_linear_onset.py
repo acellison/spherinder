@@ -14,18 +14,13 @@ g_alpha_T = 0
 g_file_prefix = 'spherinder_linear_onset'
 
 
-def coeff_sizes(Lmax, Nmax):
-    lengths = sph.Nsizes(Lmax, Nmax)
-    offsets = np.append(0, np.cumsum(lengths)[:-1])
-    return lengths, offsets
-
-
 def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
     """Construct matrices for X = [u(+), u(-), u(z), p, T]
     """
     alpha_bc, alpha_bc_s, alpha_bc_T = 2, 1, g_alpha_T+1
 
     Lout, Nout = Lmax+2, Nmax+1
+    Loutw, Noutw = Lout, Nout
     ncoeff = sph.num_coeffs(Lout, Nout)
     ncoeff0 = sph.num_coeffs(Lmax, Nmax)
 
@@ -127,29 +122,13 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman, Prandtl, Rayleigh):
 
     # Tau polynomials
     def tau_polynomials():
-        def make_tau_column(a,b,c,d,e):
-            return sparse.bmat([[  a,0*b,0*c,0*d,0*e],
-                                [0*a,  b,0*c,0*d,0*e],
-                                [0*a,0*b,  c,0*d,0*e],
-                                [0*a,0*b,0*c,  d,0*e],
-                                [0*a,0*b,0*c,0*d,  e]])
-        hstack = sparse.hstack
+        Taup = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=+1, alpha_bc=alpha_bc)
+        Taum = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=-1, alpha_bc=alpha_bc)
+        Tauz = sph.tau_projection(m, Loutw, Noutw, alpha=3, sigma=0,  alpha_bc=alpha_bc)
+        Taus = sph.tau_projection(m, Lout,  Nout,  alpha=2, sigma=0,  alpha_bc=alpha_bc_s)
+        Taut = sph.tau_projection(m, Lout, Nout, alpha=2+g_alpha_T, sigma=0, alpha_bc=alpha_bc_T)
 
-        Taup = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=+1)
-        Taum = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=-1)
-        Tauz = sph.convert_alpha(3-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0)
-        Taus = sph.convert_alpha(2-alpha_bc_s, m, Lout, Nout, alpha=alpha_bc_s, sigma=0)
-        TauT = sph.convert_alpha(2+g_alpha_T-alpha_bc_T, m, Lout, Nout, alpha=alpha_bc_T, sigma=0)
-
-        Ts = [Taup, Taum, Tauz, Taus, TauT]
-        Nlengths, Noffsets = coeff_sizes(Lout, Nout)
-
-        taup1, taum1, tauz1, taus1, tauT1 = tuple(hstack([T[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)]) for T in Ts)
-        taup2, taum2, tauz2, taus2, tauT2 = tuple(T[:,Noffsets[-2]:] for T in Ts)
- 
-        col = make_tau_column(hstack([taup1,taup2]), hstack([taum1,taum2]), hstack([tauz1,tauz2]), \
-                              hstack([taus1,taus2]), hstack([tauT1,tauT2]))
-        return col
+        return sparse.block_diag([Taup, Taum, Tauz, Taus, Taut])
 
     col = tau_polynomials()
 
@@ -303,7 +282,6 @@ def expand_evectors(vec, bases, fields='all', error_only=False):
 def plot_spectrum_callback(index, evalues, evectors, bases, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
 
-#    fields = ['u','v','w','p']
     fields = ['p']
     d = expand_evectors(evector, bases, fields=fields, error_only=error_only)
     if error_only:
@@ -336,7 +314,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     tolerance = np.inf
     if tolerance < np.inf:
         nfields = 5
-        Nlengths, _ = coeff_sizes(Lmax, Nmax)
+        Nlengths, _ = sph.coeff_sizes(Lmax, Nmax)
         tauoffset = nfields * (np.sum(Nlengths) if boundary_method == 'galerkin' else Lmax*Nmax)
         good = [np.linalg.norm(evectors[tauoffset:,i]) < tolerance for i in range(len(evalues))]
         print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))

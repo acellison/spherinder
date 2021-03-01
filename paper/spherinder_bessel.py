@@ -51,14 +51,8 @@ def matrices_tau(m, Lmax, Nmax):
     L = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
 
     # Tau polynomials
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=0)
     row = sph.operator('boundary')(m, Lmax, Nmax, alpha=0, sigma=0)
-
-    Nlengths = sph.Nsizes(Lmax, Nmax)
-    Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
-    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
-    col2 = Conv[:,Noffsets[-2]:]
-    col = sparse.hstack([col1,col2])
+    col = sph.tau_projection(m, Lmax, Nmax, alpha=2, sigma=0, alpha_bc=alpha_bc)
 
     # Create the boundary condition rows and tau columns
     corner = np.zeros((np.shape(row)[0], np.shape(col)[1]))
@@ -83,16 +77,10 @@ def matrices_galerkin(m, Lmax, Nmax):
 
     M = M @ Bound
     L = L @ Bound
+    col = sph.tau_projection(m, Lout, Nout, alpha=2, sigma=0, alpha_bc=alpha_bc)
 
-    Conv = sph.convert_alpha(2-alpha_bc, m, Lout, Nout, alpha=alpha_bc, sigma=0)
-
-    Nlengths = sph.Nsizes(Lout, Nout)
-    Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
-    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lout-2)])
-    col2 = Conv[:,Noffsets[-2]:]
-
-    L = sparse.hstack([L,  col1,  col2])
-    M = sparse.hstack([M,0*col1,0*col2])
+    L = sparse.hstack([L,  col])
+    M = sparse.hstack([M,0*col])
 
     return M, L
 

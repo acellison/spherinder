@@ -119,111 +119,27 @@ class Basis():
         return self.etabasis[:,ell][:,np.newaxis] * self.sbasis[ell][k,:]
 
 
-def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):
-    """Plot a 2D slice of the field at phi = 0"""
-    s, eta = s.ravel(), eta.ravel()
-    ss, ee = s[np.newaxis,:], eta[:,np.newaxis]
-    y = ee if stretch else np.sqrt(1-ss**2)*ee
-    
-    if fig is None or ax is None:
-        fig, ax = plt.subplots(figsize=(4.25,6))
-    im = ax.pcolormesh(ss, y, f, cmap='RdBu', shading='gouraud')
-    if colorbar:
-        fig.colorbar(im, ax=ax)
-
-    ax.set_xlabel('s')
-    ax.set_ylabel('η' if stretch else 'z')
-    if aspect is not None:
-        ax.set_aspect(aspect, adjustable='box')
-
-    fig.set_tight_layout(True)
-
-
-def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
-    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
-       This appends and deletes rows as necessary without touching the columns.
-       Nin and Nout are functions of ell and return the number of radial coefficients
-       for each vertical degree"""
-    if np.isscalar(Nin):
-        Nin = Nsizes(Lin, Nin, truncate=truncate, functor=True)
-    nintotal = sum([Nin(ell) for ell in range(Lin)])
-
-    if np.isscalar(Nout):
-        Nout = Nsizes(Lout, Nout, truncate=truncate, functor=True)
-    nouttotal = sum([Nout(ell) for ell in range(Lout)])
-
-    nrows, ncols = np.shape(mat)
-    if not nintotal == nrows:
-        raise ValueError('Incorrect size')
-
-    if not isinstance(mat, sparse.csr_matrix):
-        mat = mat.tocsr()
-    rows, cols = mat.nonzero()
-
-    # If we have the zero matrix just return a zero matrix
-    if len(rows) == 0:
-        return sparse.lil_matrix((nouttotal, ncols))
-
-    oprows, opcols, opdata = [], [], []
-    L = min(Lin,Lout)
-    inoffset, dn = 0, 0
-    for ell in range(L):
-        nin, nout = Nin(ell), Nout(ell)
-        n = min(nin,nout)
-
-        indices = np.where(np.logical_and(inoffset <= rows, rows < inoffset+n))
-        if len(indices[0]) != 0:
-            r, c = rows[indices], cols[indices]
-            oprows += (r+dn).tolist()
-            opcols += c.tolist()
-            opdata += np.asarray(mat[r,c]).ravel().tolist()
-
-        dn += nout-nin
-        inoffset += nin
-
-    result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
-
-    return result
-
-
-def remove_zero_rows(mat):
-    """Chuck any identically-zero rows from the matrix"""
-    rows, cols = mat.nonzero()
-    zrows = list(set(range(np.shape(mat)[0])) - set(rows))
-    if not zrows:
-        return mat
-    for z in zrows:
-        i = np.argmax(rows > z)
-        if i > 0:
-            rows[i:] -= 1
-    return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
-
-
-def eliminate_zeros(mat, tol=0.):
-    """Prune zeros (or small values when tol is nonzero) from the sparse matrix"""
-    if tol <= 0:
-        mat.eliminate_zeros()
-        return mat
-    mat = mat.tocsr()
-    rows, cols, _ = sparse.find(abs(mat) >= tol)
-    values = [mat[r,c] for r,c in zip(rows, cols)]
-    return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(mat))
-
 
 def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
     """Returns the number of radials coefficients for each vertical degree"""
     if truncate:
         _check_radial_degree(Lmax, Nmax)
     sizes = [Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)]
-    if functor:
-        return lambda ell: sizes[ell]
-    else:
-        return sizes
+    return (lambda ell: sizes[ell]) if functor else sizes
 
 
 def num_coeffs(Lmax, Nmax, truncate=default_truncate):
     """Return the total number of coefficients for a field"""
     return sum(Nsizes(Lmax, Nmax, truncate=truncate))
+
+
+def coeff_sizes(Lmax, Nmax, truncate=default_truncate):
+    """Return the number of radial coefficients for each vertical degree,
+       and the offsets for indexing into a coefficient vector for the first
+       radial mode of each vertical degree"""
+    lengths = Nsizes(Lmax, Nmax, truncate=truncate)
+    offsets = np.append(0, np.cumsum(lengths)[:-1])
+    return lengths, offsets
 
 
 def norm_ratio(dalpha, normalize=default_normalize):
@@ -751,4 +667,109 @@ def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=in
     sop = lambda n,a,b: (A(+1)**beta)(n,a-beta,b)
     op = make_operator(dell=0, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, truncate=truncate)
     return op.astype(dtype)
+
+
+def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    Nlengths, Noffsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
+    Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
+    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
+    col2 = Conv[:,Noffsets[-2]:]
+    return sparse.hstack([col1, col2])
+
+
+def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
+    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
+       This appends and deletes rows as necessary without touching the columns.
+       Nin and Nout are functions of ell and return the number of radial coefficients
+       for each vertical degree"""
+    if np.isscalar(Nin):
+        Nin = Nsizes(Lin, Nin, truncate=truncate, functor=True)
+    nintotal = sum([Nin(ell) for ell in range(Lin)])
+
+    if np.isscalar(Nout):
+        Nout = Nsizes(Lout, Nout, truncate=truncate, functor=True)
+    nouttotal = sum([Nout(ell) for ell in range(Lout)])
+
+    # Check if all sizes match.  If so, just return the input matrix
+    if Lin == Lout and all([Nin(ell) == Nout(ell) for ell in range(Lin)]):
+        return mat
+
+    # Check the number of rows matches the input (Lin, Nin) dimensions
+    nrows, ncols = np.shape(mat)
+    if not nintotal == nrows:
+        raise ValueError('Incorrect size')
+
+    # Extract the nonzero entries of the input matrix
+    if not isinstance(mat, sparse.csr_matrix):
+        mat = mat.tocsr()
+    rows, cols = mat.nonzero()
+
+    # If we have the zero matrix just return a zero matrix
+    if len(rows) == 0:
+        return sparse.lil_matrix((nouttotal, ncols))
+
+    # Build up the resized operator
+    oprows, opcols, opdata = [], [], []
+    L = min(Lin,Lout)
+    inoffset, dn = 0, 0
+    for ell in range(L):
+        nin, nout = Nin(ell), Nout(ell)
+        n = min(nin,nout)
+
+        indices = np.where(np.logical_and(inoffset <= rows, rows < inoffset+n))
+        if len(indices[0]) != 0:
+            r, c = rows[indices], cols[indices]
+            oprows += (r+dn).tolist()
+            opcols += c.tolist()
+            opdata += np.asarray(mat[r,c]).ravel().tolist()
+
+        dn += nout-nin
+        inoffset += nin
+
+    result = sparse.csr_matrix((opdata,(oprows,opcols)), shape=(nouttotal,ncols), dtype=mat.dtype)
+
+    return result
+
+
+def remove_zero_rows(mat):
+    """Chuck any identically-zero rows from the matrix"""
+    rows, cols = mat.nonzero()
+    zrows = list(set(range(np.shape(mat)[0])) - set(rows))
+    if not zrows:
+        return mat
+    for z in zrows:
+        i = np.argmax(rows > z)
+        if i > 0:
+            rows[i:] -= 1
+    return sparse.csr_matrix((mat.data, (rows,cols)), shape=(max(rows)+1,np.shape(mat)[1]))
+
+
+def eliminate_zeros(mat, tol=0.):
+    """Prune zeros (or small values when tol is nonzero) from the sparse matrix"""
+    if tol <= 0:
+        mat.eliminate_zeros()
+        return mat
+    mat = mat.tocsr()
+    rows, cols, _ = sparse.find(abs(mat) >= tol)
+    values = [mat[r,c] for r,c in zip(rows, cols)]
+    return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(mat))
+
+
+def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):
+    """Plot a 2D slice of the field at phi = 0"""
+    ss, ee = s.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
+    y = ee if stretch else np.sqrt(1-ss**2)*ee
+
+    if fig is None or ax is None:
+        fig, ax = plt.subplots(figsize=(4.25,6))
+    im = ax.pcolormesh(ss, y, f, cmap='RdBu', shading='gouraud')
+    if colorbar:
+        fig.colorbar(im, ax=ax)
+
+    ax.set_xlabel('s')
+    ax.set_ylabel('η' if stretch else 'z')
+    if aspect is not None:
+        ax.set_aspect(aspect, adjustable='datalim')
+
+    fig.set_tight_layout(True)
 

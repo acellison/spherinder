@@ -19,14 +19,23 @@ from fileio import save_data, save_figure, plotspy
 
 
 g_file_prefix = 'spherinder_inertial_waves'
+use_full_vertical_velocity = False
+
+
+def vertical_velocity_size(Lmax, Nmax, full=use_full_vertical_velocity):
+    return (Lmax, Nmax) if full else (Lmax-1, Nmax)
 
 
 def matrices(m, Lmax, Nmax, boundary_method):
     """Construct matrices for X = [i*u(+), i*u(-), i*u(z), p]"""
     alpha_bc = 0
 
-    ncoeff = sum(sph.Nsizes(Lmax, Nmax))
-    Zero = sparse.lil_matrix((ncoeff,ncoeff))
+    def zeros(n,m):
+        return sparse.lil_matrix((n,m))
+
+    ncoeff = sph.num_coeffs(Lmax, Nmax)
+    ncoeffw = sph.num_coeffs(*vertical_velocity_size(Lmax, Nmax))
+    Zero = zeros(ncoeff,ncoeff)
     I = sparse.eye(ncoeff)
 
     # Scalar gradient operators
@@ -42,29 +51,35 @@ def matrices(m, Lmax, Nmax, boundary_method):
     Bound = Boundary @ Rad
     Bound = sph.remove_zero_rows(Bound).astype('float64')
 
+    Nlengths, Noffsets = sph.coeff_sizes(Lmax, Nmax)
+    if not use_full_vertical_velocity:
+        Divz = Divz[:,:Noffsets[-1]]
+        Gradz = Gradz[:Noffsets[-1],:]
+        Bound = Bound[:,:2*ncoeff+Noffsets[-1]]
+
     # Tau conversion
     # Time derivative matrices
     M00 = I
     M11 = I
-    M22 = I
+    M22 = sparse.eye(ncoeffw)
     M33 = Zero
 
     # i*u+ equation - spin+ velocity component
     L00 = 2 * I
     L01 = Zero
-    L02 = Zero
+    L02 = zeros(ncoeff, ncoeffw)
     L03 = Gradp
 
     # i*u- equation - spin- velocity component
     L10 = Zero
     L11 = -2 * I
-    L12 = Zero
+    L12 = zeros(ncoeff, ncoeffw)
     L13 = Gradm
 
     # i*w equation - vertical velocity component
-    L20 = Zero
-    L21 = Zero
-    L22 = Zero
+    L20 = zeros(ncoeffw, ncoeff)
+    L21 = zeros(ncoeffw, ncoeff)
+    L22 = zeros(ncoeffw, ncoeffw)
     L23 = Gradz
 
     # Divergence equation
@@ -85,17 +100,10 @@ def matrices(m, Lmax, Nmax, boundary_method):
 
     # Boundary conditions
     def impenetrable():
-        Nlengths = sph.Nsizes(Lmax, Nmax)
-        Noffsets = np.append(0, np.cumsum(Nlengths)[:-1])
-
-        ntau, npressure = np.shape(Bound)[0], np.sum(Nlengths)
+        ntau, npressure = np.shape(Bound)[0], ncoeff
         row = sparse.hstack([Bound, sparse.lil_matrix((ntau,npressure))])
-
-        Conv = sph.convert_alpha(1-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=+1)
-        col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
-        col2 = Conv[:,Noffsets[-2]:]
-        col = sparse.hstack([col1,col2])
-        col = sparse.vstack([(i==0)*col for i in range(4)])
+        col = sph.tau_projection(m, Lmax, Nmax, alpha=1, sigma=+1, alpha_bc=alpha_bc)
+        col = sparse.vstack([col, sparse.lil_matrix((np.shape(L)[0]-np.shape(col)[0],np.shape(col)[1]))])
 
         return row, col
 
@@ -260,9 +268,10 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     # Construct the bases
     ns, neta = 256, 257
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    Lmaxw, Nmaxw = vertical_velocity_size(Lmax, Nmax)
     bases = {'up': sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1),
              'um': sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1),
-             'uz': sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=1),
+             'uz': sph.Basis(s, eta, m, Lmaxw, Nmaxw, sigma=0, alpha=1),
              'p':  sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0)}
 
     evalues, evectors = evalues[indices], evectors[:,indices]
