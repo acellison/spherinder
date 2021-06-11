@@ -24,7 +24,7 @@ class Basis():
         if not lazy:
             self._construct_basis()
         else:
-            self.sbasis, self.etabasis = None, None
+            self._sbasis, self._etabasis = None, None
             self._constructed = False
 
     @property
@@ -80,7 +80,7 @@ class Basis():
         else:
             sbasis = [fun(ell) for ell in range(Lmax)]
 
-        self.sbasis, self.etabasis = sbasis, etabasis
+        self._sbasis, self._etabasis = sbasis, etabasis
         self._constructed = True
 
 
@@ -104,6 +104,18 @@ class Basis():
             f += Peta[:,ell][:,np.newaxis] * (coeffs[index:index+N] @ Ps)
             index += N
         return f
+
+    @property
+    def sbasis(self):
+        if not self._constructed:
+            self._construct_basis()
+        return self._sbasis
+
+    @property
+    def etabasis(self):
+        if not self._constructed:
+            self._construct_basis()
+        return self._etabasis
 
 
     def __getitem__(self, index):
@@ -144,7 +156,7 @@ def coeff_sizes(Lmax, Nmax, truncate=default_truncate):
 
 def norm_ratio(dalpha, normalize=default_normalize):
     """Ratio of basis normalization scale factor for a change in alpha"""
-    return 2**(dalpha/2) if normalize else 1
+    return 2**(-dalpha/2) if normalize else 1
 
 
 def _check_radial_degree(Lmax, Nmax):
@@ -346,7 +358,6 @@ class RadialMultiplication(Operator):
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
-        # Fixme: implement exact flag
         sigma = 0
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
             return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
