@@ -322,7 +322,7 @@ class Conversion(Operator):
         return (scale * Op).astype(self.dtype)
 
 
-class RadialVector(Operator):
+class RadialComponent(Operator):
     """Extract the spherical radial part of a velocity field"""   
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         codomain = [Codomain(0,+1,0), Codomain(0,0,0), Codomain(+1,+1,0)]
@@ -649,7 +649,7 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     if name == '1-r**2':
         return dispatch(OneMinusRadiusSquared)
     if name == 'rdot':
-        return dispatch(RadialVector)
+        return dispatch(RadialComponent)
     if name in ['boundary', 'r=1']:
         return dispatch(Boundary)
     if name == 'conversion':
@@ -680,11 +680,12 @@ def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=in
     return op.astype(dtype)
 
 
-def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-    Nlengths, Noffsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
+def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float64', internal=internal_dtype, truncate=default_truncate):
     Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
-    col1 = sparse.hstack([Conv[:,Noffsets[ell]+Nlengths[ell]-1] for ell in range(Lmax-2)])
-    col2 = Conv[:,Noffsets[-2]:]
+    lengths, offsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
+    indices = offsets+lengths-1
+    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
+    col2 = Conv[:,offsets[-2*(1+shift)]:]
     return sparse.hstack([col1, col2])
 
 
