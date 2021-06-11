@@ -431,10 +431,10 @@ def main():
     solve = True
     plot_evalues = True
     plot_fields = True
-    plot_spy = False
+    plot_spy = True
 
     m = 95
-    Lmax, Nmax = 12, 64
+    Lmax, Nmax = 10, 10
     boundary_method = 'tau'
 
     print(f'Inertial Waves, m = {m}')

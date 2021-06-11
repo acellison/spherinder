@@ -13,12 +13,7 @@ from fileio import save_data, save_figure
 g_file_prefix = 'spherinder_hydrodynamics'
 
 
-use_extended_pressure = False
 use_full_vertical_velocity = False
-
-def pressure_size(Lmax, Nmax, full=use_extended_pressure):
-    return (Lmax+2, Nmax+1) if full else (Lmax, Nmax)
-
 
 def vertical_velocity_size(Lmax, Nmax, full=use_full_vertical_velocity):
     return (Lmax, Nmax) if full else (Lmax-1, Nmax)
@@ -30,12 +25,10 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     alpha_bc, alpha_bc_s = 2, 1
 
     Lout, Nout = Lmax+2, Nmax+1
-    Lp, Np = pressure_size(Lmax, Nmax)
     Lw, Nw = vertical_velocity_size(Lmax, Nmax)
     Loutw, Noutw = Lw+2, Nw+1
     ncoeff = sph.num_coeffs(Lout, Nout)
     ncoeff0 = sph.num_coeffs(Lmax, Nmax)
-    ncoeffp = sph.num_coeffs(Lp, Np)
     ncoeffw = sph.num_coeffs(Lw, Nw)
     ncoutw = sph.num_coeffs(Loutw, Noutw)
     
@@ -57,12 +50,12 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
         Divz = Divz[:,:Noffsets[-1]]
 
     # Pressure gradient
-    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lp, Np, alpha=2)
+    Gradp, Gradm, Gradz = sph.operator('grad')(m, Lmax, Nmax, alpha=2)
 
     # Pad the pressure gradient to fit the Galerkin coefficient sizes
-    Gradp = sph.resize(Gradp, Lp, Np, Lout,  Nout)
-    Gradm = sph.resize(Gradm, Lp, Np, Lout,  Nout)
-    Gradz = sph.resize(Gradz, Lp, Np, Loutw, Noutw)
+    Gradp = sph.resize(Gradp, Lmax, Nmax, Lout,  Nout)
+    Gradm = sph.resize(Gradm, Lmax, Nmax, Lout,  Nout)
+    Gradz = sph.resize(Gradz, Lmax, Nmax, Loutw, Noutw)
 
     # Conversion matrices
     Cp = sph.convert_alpha(2, m, Lout,  Nout,  alpha=1, sigma=+1,)
@@ -73,7 +66,7 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     M00 = Cp @ Boundp
     M11 = Cm @ Boundm
     M22 = Cz @ Boundz
-    M33 = sparse.lil_matrix((ncoeff,ncoeffp))
+    M33 = sparse.lil_matrix((ncoeff,ncoeff0))
 
     # i*u+ equation - spin+ velocity component
     L00 = (-2j * Cp + Ekman * Lapp) @ Boundp
@@ -97,7 +90,7 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
     L30 = Divp @ Boundp
     L31 = Divm @ Boundm
     L32 = Divz @ Boundz
-    L33 = sparse.lil_matrix((ncoeff,ncoeffp))
+    L33 = sparse.lil_matrix((ncoeff,ncoeff0))
 
     Mmats = [M00, M11, M22, M33]
     upmats = [L00, L01, L02, L03]
@@ -111,23 +104,11 @@ def matrices_galerkin(m, Lmax, Nmax, Ekman):
 
     # Tau polynomials
     def tau_polynomials():
-        if use_extended_pressure:
-            def make_tau_column(a,b,c,d):
-                return sparse.bmat([[  a,0*c,0*d],
-                                    [0*a,0*c,0*d],
-                                    [0*a,  c,0*d],
-                                    [0*a,0*c,  d]])
-        else:
-            def make_tau_column(a,b,c,d):
-                return sparse.block_diag([a,b,c,d])
-
         Taup = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=+1, alpha_bc=alpha_bc)
         Taum = sph.tau_projection(m, Lout,  Nout,  alpha=3, sigma=-1, alpha_bc=alpha_bc)
         Tauz = sph.tau_projection(m, Loutw, Noutw, alpha=3, sigma=0,  alpha_bc=alpha_bc)
         Taus = sph.tau_projection(m, Lout,  Nout,  alpha=2, sigma=0,  alpha_bc=alpha_bc_s)
-
-        col = make_tau_column(Taup, Taum, Tauz, Taus)
-        return col
+        return sparse.block_diag([Taup, Taum, Tauz, Taus])
 
     col = tau_polynomials()
 
@@ -228,18 +209,27 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     if boundary_method == 'galerkin':
         galerkin = True
         dalpha = 1
-        Lp, Np = pressure_size(Lmax, Nmax)
         Lw, Nw = vertical_velocity_size(Lmax, Nmax)
     else:
         raise ValueError('Boundary method not implemented')
 
     upbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1+dalpha, galerkin=galerkin)
     umbasis = sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1+dalpha, galerkin=galerkin)
-    uzbasis = sph.Basis(s, eta, m, Lw, Nw, sigma=0,  alpha=1+dalpha, galerkin=galerkin)
-    pbasis  = sph.Basis(s, eta, m, Lp, Np, sigma=0,  alpha=2, galerkin=False)
+    uzbasis = sph.Basis(s, eta, m, Lw,   Nw,   sigma=0,  alpha=1+dalpha, galerkin=galerkin)
+    pbasis  = sph.Basis(s, eta, m, Lmax, Nmax, sigma=0,  alpha=2, galerkin=False)
     bases = {'up':upbasis, 'um':umbasis, 'uz':uzbasis, 'p':pbasis}
 
     return bases
+
+
+def create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns, nphi):
+    s, eta = np.linspace(0,1,ns+1)[1:], np.array([0.])
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+
+    s, phi = s[np.newaxis,:], np.linspace(0,2*np.pi,nphi+1)[:,np.newaxis]
+    x, y, mode = s*np.cos(phi), s*np.sin(phi), np.exp(1j*m*phi)
+
+    return bases, x, y, phi, mode
 
 
 def expand_evectors(Lmax, Nmax, vec, bases):
@@ -263,7 +253,7 @@ def expand_evectors(Lmax, Nmax, vec, bases):
     return u, v, w, p, tau
 
 
-def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
+def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, equatorial_bases=None):
     evalue, evector = evalues[index], evectors[:,index]
     u, v, w, p, tau = expand_evectors(Lmax, Nmax, evector, bases)
 
@@ -289,6 +279,34 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases):
     fig.suptitle('λ = {:1.4f}'.format(evalue))
     fig.show()
 
+    if equatorial_bases is None:
+        return
+
+    # Plot the equatorial slices
+    bases, x, y, phi, mode = equatorial_bases
+    u, v, w, p, tau = expand_evectors(Lmax, Nmax, evector, bases)
+    fields = [u,v,w,p]
+
+    fig, ax = plt.subplots(1,len(field_indices),figsize=(14,4))
+    for i in range(len(field_indices)):
+        field_index = field_indices[i]
+        f = mode * fields[field_index]
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+        print(f'max({field_names[field_index]}) = {np.max(abs(f))}')
+
+        im = ax[i].pcolormesh(x, y, f, cmap='RdBu', shading='gouraud')
+        ax[i].plot(np.cos(phi), np.sin(phi), color='k', linewidth=0.5, alpha=0.5)
+        ax[i].set_aspect(aspect='equal', adjustable='datalim')
+        ax[i].set_title(r'${}$'.format(field_names[field_index]))
+
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    fig.suptitle('λ = {:1.4f}'.format(evalue))
+    fig.set_tight_layout(True)
+    fig.show()
+
 
 def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
     # Load the data
@@ -302,7 +320,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
+    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=512, nphi=512)
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, equatorial_bases)
 
     # Eigenvalue plot
     fig, ax = plot_spectrum(evalues, onpick=onpick)
@@ -398,23 +417,22 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 45, 45, 'all', None
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 60, 60, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 20, 40, 1000, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 20, 40, 1000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
     print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
     print(f'  Boundary method = {boundary_method}')
-    print(f'  Extended pressure coefficients = {use_extended_pressure}')
     print(f'  Full vertical velocity coefficients = {use_full_vertical_velocity}')
 
     if solve:

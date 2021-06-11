@@ -242,6 +242,16 @@ def create_bases(m, Lmax, Nmax, boundary_method, s, eta):
     return bases
 
 
+def create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns, nphi):
+    s, eta = np.linspace(0,1,ns+1)[1:], np.array([0.])
+    bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
+
+    s, phi = s[np.newaxis,:], np.linspace(0,2*np.pi,nphi+1)[:,np.newaxis]
+    x, y, mode = s*np.cos(phi), s*np.sin(phi), np.exp(1j*m*phi)
+
+    return bases, x, y, phi, mode
+
+
 def expand_evectors(vec, bases, fields='all', error_only=False):
     ncoeffs = [b.ncoeffs for b in [bases['up'], bases['um'], bases['uz'], bases['p'], bases['T']]]
     offsets = np.append(0, np.cumsum(ncoeffs))
@@ -279,7 +289,7 @@ def expand_evectors(vec, bases, fields='all', error_only=False):
     return {'u':u, 'v':v, 'w':w, 'p':p, 'T':T}
 
 
-def plot_spectrum_callback(index, evalues, evectors, bases, error_only=False):
+def plot_spectrum_callback(index, evalues, evectors, bases, equatorial_bases=None, error_only=False):
     evalue, evector = evalues[index], evectors[:,index]
 
     fields = ['p']
@@ -288,17 +298,42 @@ def plot_spectrum_callback(index, evalues, evectors, bases, error_only=False):
         return
 
     fig, ax = plt.subplots(1,len(fields),figsize=(0.5+3*len(fields),4.5))
-    if len(fields) == 1:
-        ax = [ax]
+    if len(fields) == 1: ax = [ax]
+
     s, eta = bases['up'].s, bases['up'].eta
     for i, field in enumerate(fields):
         f = d[field].real if np.linalg.norm(d[field].real) >= np.linalg.norm(d[field].imag) else d[field].imag
         sph.plotfield(s, eta, f, fig=fig, ax=ax[i], colorbar=len(fields)>1)
         ax[i].set_title(r'${}$'.format(field))
 
-    fig.suptitle('Eigenvalue: {:1.4e}'.format(evalue))
+    fig.suptitle('λ = {:1.4e}'.format(evalue))
     fig.set_tight_layout(True)
+    fig.show()
 
+    if equatorial_bases is None:
+        return
+
+    bases, x, y, phi, mode = equatorial_bases
+    d = expand_evectors(evector, bases, fields=fields, error_only=error_only)
+
+    fig, ax = plt.subplots(1,len(fields),figsize=(0.5+5*len(fields),4.5))
+    if len(fields) == 1: ax = [ax]
+
+    for i, field in enumerate(fields):
+        f = mode * d[field]
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+
+        im = ax[i].pcolormesh(x, y, f, cmap='RdBu', shading='gouraud')
+        ax[i].plot(np.cos(phi), np.sin(phi), color='k', linewidth=0.5, alpha=0.5)
+        ax[i].set_aspect(aspect='equal', adjustable='datalim')
+        ax[i].set_title(r'${}$'.format(field))
+
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    fig.suptitle('λ = {:1.4f}'.format(evalue))
+    fig.set_tight_layout(True)
     fig.show()
 
 
@@ -314,8 +349,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     tolerance = np.inf
     if tolerance < np.inf:
         nfields = 5
-        Nlengths, _ = sph.coeff_sizes(Lmax, Nmax)
-        tauoffset = nfields * (np.sum(Nlengths) if boundary_method == 'galerkin' else Lmax*Nmax)
+        tauoffset = nfields * sph.num_coeffs(Lmax, Nmax)
         good = [np.linalg.norm(evectors[tauoffset:,i]) < tolerance for i in range(len(evalues))]
         print('Number of eigenvectors with tau norm below {}: {}/{}'.format(tolerance, np.sum(good), len(evalues)))
         evalues, evectors = evalues[good], evectors[:,good]
@@ -324,7 +358,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
     ns, neta = 1024, 1025
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, bases, error_only=error_only)
+    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=512, nphi=512)
+    onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, bases, equatorial_bases=equatorial_bases, error_only=error_only)
 
     fig, ax = plot_spectrum(evalues, onpick)
     ax.set_title('Boussinesq Eigenvalues')
@@ -386,11 +421,11 @@ def rotation_configs():
             {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 60, 'Nmax': 40},
             {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 40, 'Nmax': 40},
             {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 100, 'Nmax': 60},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 120, 'Nmax': 80},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 100, 'Nmax': 100},
             {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 140, 'Nmax': 100},
             {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 160, 'Nmax': 120},
             {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 240, 'Nmax': 200},
-            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 120, 'Nmax': 200},
+            {'Ekman': 10**-8, 'm': 139, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 300, 'Nmax': 200},
             {'Ekman': 10**-9, 'm': 300, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
             {'Ekman': 10**-10, 'm': 646, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
             {'Ekman': 10**-11, 'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
@@ -424,15 +459,15 @@ def solve():
 
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
-    nev = 'all'
-#    nev = 10
+#    nev = 'all'
+    nev = 1000
 
-    config_index = 0
+    config_index = 4
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
