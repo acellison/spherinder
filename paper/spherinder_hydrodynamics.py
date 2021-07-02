@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
+#from spherinder import config
+#config.default_normalize = False
+
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
@@ -159,9 +162,10 @@ def make_filename_prefix(directory='data'):
     return os.path.join(abspath, g_file_prefix)
 
 
-def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext, prefix='evalues'):
+def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext, prefix='evalues', nev=None):
     truncstr = '-truncated'
-    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}{truncstr}' + ext
+    nevstr = f'-nev={nev}' if nev else ''
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}{truncstr}{nevstr}' + ext
 
 
 def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target):
@@ -308,9 +312,9 @@ def plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, 
     fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
+def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl', nev=nev)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -330,9 +334,9 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields):
     save_figure(plot_filename, fig)
 
 
-def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
+def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
     # Load the data
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl', nev=nev)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -353,7 +357,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
                                    -0.02587985072653081-0.036785829812208994j, \
                                    -0.03917822055255002-0.15922951557020207j,  \
                                    -0.05162747536026285-0.20299862623558654j])
-        xlim, ylim = [-.237,-.0067], [-.9,.9]
+        xlim, ylim = [-.2,-.0067], [-.3,.4]
         xticks = [-.2,-.15,-.1,-.05]
     elif (m,Ekman) == (30,1e-6):
         evalue_targets = np.array([-0.007054484980806183+0.060694054092827694j, \
@@ -362,7 +366,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
                                    -0.010757237569379529-0.019425097197991206j, \
                                    -0.015971669036929946-0.07690418489506128j,  \
                                    -0.020517842733271896-0.10502321882336622j])
-        xlim, ylim = [-.044, -.0057], [-.32,.32]
+        xlim, ylim = [-.044, -.0057], [-.15,.22]
         xticks = [-.04,-.03,-.02,-.01]
 
     # Get the eigenvalue indices
@@ -389,9 +393,11 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
     if evalue_targets is None:
         return
 
-    nrows = 2
-    ncols = 3
-    fig, plot_axes = plt.subplots(nrows,ncols,figsize=(2.75*ncols,4*nrows))
+    nrows = 1
+    ncols = 6
+    fig, plot_axes = plt.subplots(nrows,ncols,figsize=(2.75*ncols,5*nrows))
+    if nrows == 1:
+        plot_axes = [plot_axes]
     for i, index in enumerate(evalue_indices):
         evalue, evector = evalues[index], evectors[:,index]
 
@@ -404,7 +410,9 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
         row, col = i//ncols, i%ncols
         ax = plot_axes[row][col]
         sph.plotfield(s, eta, p, fig=fig, ax=ax, colorbar=False)
-        ax.set_title(f'$\lambda = ${evalue:.4f}')
+#        ax.set_xlim([0,1])
+        estr = f'{evalue:.4f}'.replace('j','i')
+        ax.set_title(f'$\lambda = ${estr}')
         if col > 0:
             ax.set_yticklabels([])
             ax.set_ylabel(None)
@@ -417,17 +425,17 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman):
 
 
 def main():
-    solve = True
+    solve = False
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 60, 60, 'all', None
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 75, 75, 'all', None
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 20, 40, 1000, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 60, 60, 'all', None
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 160, 240, 1000, -0.01934+0.11290j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 4000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
     print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
@@ -439,8 +447,8 @@ def main():
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields)
-#        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman)
+#        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev=nev)
+        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev=nev)
         plt.show()
 
 
