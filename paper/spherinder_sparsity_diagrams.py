@@ -171,8 +171,13 @@ def radial_operators():
 
 
 def conversion_operators():
-    # radial operators
-    fig, ax = plt.subplots(1,2,figsize=(6,3))
+    # conversion operators
+    use_beta = False
+    if use_beta:
+        fig, ax = plt.subplots(1,2,figsize=(6,3))
+    else:
+        fig, ax = plt.subplots(1,1,figsize=(3,3))
+        ax = [ax]
 
     # conversion sparsity structure
     operator = sph.operator('conversion')
@@ -180,13 +185,13 @@ def conversion_operators():
     Op = operator(m,Lmax,Nmax,alpha=0,sigma=0)
     plot_splatter(r'$\mathcal{I}_{\alpha}$', Op, codomain, ax=ax[0])
 
-    Op = sph.convert_beta(m, Lmax, Nmax, alpha=0, sigma=0, beta=1)
-    codomain = (Lmax,Nmax,0)
-    plot_splatter(r'$\mathcal{I}_{\beta}$', Op, codomain, ax=ax[1], margins=(1.5*margin,margin))
+    if use_beta:
+        Op = sph.convert_beta(m, Lmax, Nmax, alpha=0, sigma=0, beta=1)
+        codomain = (Lmax,Nmax,0)
+        plot_splatter(r'$\mathcal{I}_{\beta}$', Op, codomain, ax=ax[1], margins=(1.5*margin,margin))
 
     filename = output_filename('figures', ext='.png', prefix='conversion_ops')
     save_figure(filename, fig)
-
 
 
 def main():
