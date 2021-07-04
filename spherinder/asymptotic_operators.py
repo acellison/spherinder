@@ -100,7 +100,7 @@ def S_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=inter
 
 
 def S_fourth(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
-    """Multiply a field by s**2 
+    """Multiply a field by s**4
        Codomain: (Lmax->Lmax, Nmax->Nmax+2, alpha->alpha) if exact
     """
     s21 = S_squared(m, Lmax, Nmax,   alpha, exact=True, dtype=internal, internal=internal)

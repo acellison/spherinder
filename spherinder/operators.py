@@ -681,11 +681,17 @@ def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=in
 
 
 def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float64', internal=internal_dtype, truncate=default_truncate):
+    """Create the tau projection matrix.  Converts the tau polynomial expressed in the alpha_bc basis
+       to the alpha basis."""
+    # FIXME: shift should just return a single column, not all of them after shift!
     Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
     lengths, offsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
     indices = offsets+lengths-1
-    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
-    col2 = Conv[:,offsets[-2*(1+shift)]:]
+#    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
+#    col2 = Conv[:,offsets[-2*(1+shift)]:]
+    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]-shift+1] for ell in range(Lmax-2)])
+    col2 = Conv[:,offsets[-2]:]
+    print([np.shape(c) for c in [col1,col2]])
     return sparse.hstack([col1, col2])
 
 
