@@ -249,11 +249,6 @@ class Operator():
         self.Z = Jacobi.operator('Z', dtype=internal)
         self.Id = Jacobi.operator('Id', dtype=internal)
 
-        if self.truncate:
-            self.n_for_ell = lambda Nmax, ell: Nmax - ell//2
-        else:
-            self.n_for_ell = lambda Nmax, ell: Nmax
-
     @property
     def codomain(self):
         return self._codomain
@@ -277,12 +272,12 @@ class Boundary(Operator):
         bc = Jacobi.polynomials(Lmax,alpha,alpha,1.,dtype=self.internal)
 
         nrows = [Nmax, Nmax] if self.truncate else [Nmax+L//2, Nmax+(L-1)//2]
-        ncols = np.sum([self.n_for_ell(Nmax, ell) for ell in range(Lmax)])
-        matrix = lambda shape: sparse.lil_matrix(shape, dtype=self.internal)
-        Opeven, Opodd = tuple(matrix((nr,ncols)) for nr in nrows)
-        index = 0
+        ncols = num_coeffs(Lmax, Nmax, truncate=self.truncate)
+        zeros = lambda shape: sparse.lil_matrix(shape, dtype=self.internal)
+        Opeven, Opodd = tuple(zeros((nr,ncols)) for nr in nrows)
+        index, nsizes = 0, Nsizes(Lmax, Nmax, truncate=self.truncate)
         for ell in range(Lmax):
-            N = self.n_for_ell(Nmax, ell)
+            N = nsizes[ell]
             op = bc[ell] * ((A(+1)**((L-ell)//2)) @ (A(-1)**(ell//2)))(N, ell+alpha+1/2, m+sigma)
             mat = [Opeven, Opodd][ell % 2]
             mat[:np.shape(op)[0],index:index+N] = op
