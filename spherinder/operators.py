@@ -654,6 +654,7 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
 
 
 def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize, exact=True):
+    ntimes = int(ntimes)
     Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate, normalize=normalize)
 
     ncoeffs = sum(Nsizes(Lmax, Nmax, truncate=truncate))
@@ -682,11 +683,8 @@ def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float6
     Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
     lengths, offsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
     indices = offsets+lengths-1
-#    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
-#    col2 = Conv[:,offsets[-2*(1+shift)]:]
-    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]-shift+1] for ell in range(Lmax-2)])
-    col2 = Conv[:,offsets[-2]:]
-    print([np.shape(c) for c in [col1,col2]])
+    col1 = sparse.hstack([Conv[:,indices[ell]-shift:indices[ell]+1] for ell in range(Lmax-2*(1+shift))])
+    col2 = Conv[:,offsets[-2*(1+shift)]:]
     return sparse.hstack([col1, col2])
 
 
