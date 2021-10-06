@@ -20,6 +20,12 @@ def horizontal_laplacian(m, Lmax, Nmax, alpha, dtype='float64', internal=interna
     return dg.astype(dtype)
 
 
+def horizontal_laplacian_squared(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
+    lap1 = horizontal_laplacian(m, Lmax, Nmax, alpha,   dtype=internal_dtype, internal=internal_dtype)
+    lap2 = horizontal_laplacian(m, Lmax, Nmax, alpha+2, dtype=internal_dtype, internal=internal_dtype)
+    return (lap2 @ lap1).astype(dtype)
+
+
 def rescaled_horizontal_laplacian(m, Lmax, Nmax, alpha, epsilon, dtype='float64', internal=internal_dtype):
     """∇_{\perp}**2 = epsilon**2 * (1/s*ds(s*ds(f)) + 1/s**2 * dphi(dphi(f)))
        Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+2)
