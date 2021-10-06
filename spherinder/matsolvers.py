@@ -16,9 +16,11 @@ Solvers defined in this module:
 matsolvers = de.matsolvers.matsolvers
 
 
-def _to_int64(x):
+def _to_int64(x, copy=True):
     """Force 64-bit indices so Umfpack doesn't raise an out of memory exception"""
-    y = sparse.csc_matrix(x).copy()
+    y = sparse.csc_matrix(x)
+    if copy:
+        y = y.copy()
     y.indptr = y.indptr.astype(np.int64)
     y.indices = y.indices.astype(np.int64)
     return y
@@ -47,7 +49,7 @@ class UmfpackSpsolve64(SparseSolver):
 
     def __init__(self, matrix, solver=None):
         from scikits import umfpack
-        self.matrix = _to_int64(matrix)
+        self.matrix = _to_int64(matrix, copy=True)
 
     def solve(self, vector):
         return spla.spsolve(self.matrix, vector, use_umfpack=True)
@@ -59,7 +61,7 @@ class UmfpackFactorized64(SparseSolver):
 
     def __init__(self, matrix, solver=None):
         from scikits import umfpack
-        self.LU = spla.factorized(_to_int64(matrix))
+        self.LU = spla.factorized(_to_int64(matrix, copy=True))
 
     def solve(self, vector):
         return self.LU(vector)
