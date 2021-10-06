@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import multiprocessing as mp
 
 from dedalus_sphere import jacobi as Jacobi
@@ -766,21 +767,37 @@ def eliminate_zeros(mat, tol=0.):
     return sparse.csr_matrix((values,(rows,cols)), shape=np.shape(mat))
 
 
-def plotfield(s, eta, f, fig=None, ax=None, stretch=False, aspect='equal', colorbar=True):
+def plotfield(s, eta, f, fig=None, ax=None, stretch=False, arcsin=False, aspect='equal', colorbar=True, cmap='RdBu', cbar_format=None, shading=None):
     """Plot a 2D slice of the field at phi = 0"""
     ss, ee = s.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
     y = ee if stretch else np.sqrt(1-ss**2)*ee
+    if shading is None:
+        shading = 'auto' if stretch else 'gouraud'
 
     if fig is None or ax is None:
         fig, ax = plt.subplots(figsize=(4.25,6))
-    im = ax.pcolormesh(ss, y, f, cmap='RdBu', shading='gouraud')
-    if colorbar:
-        fig.colorbar(im, ax=ax)
 
-    ax.set_xlabel('s')
+    if arcsin:
+        ss = np.arcsin(ss)
+        slabel = r'$\arcsin{(s)}$'
+    else:
+        slabel = 's'
+
+    im = ax.pcolormesh(ss, y, f, cmap=cmap, shading=shading)
+    if colorbar:
+        def fmt(x, pos):
+            a, b = '{:.0e}'.format(x).split('e')
+            b = int(b)
+            return r'${} \times 10^{{{}}}$'.format(a, b)
+        if cbar_format == 'log':
+            cbar_format = ticker.FuncFormatter(fmt)
+        fig.colorbar(im, ax=ax, format=cbar_format)
+
+    ax.set_xlabel(slabel)
     ax.set_ylabel('η' if stretch else 'z')
     if aspect is not None:
         ax.set_aspect(aspect, adjustable='datalim')
 
     fig.set_tight_layout(True)
+    return fig, ax
 
