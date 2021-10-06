@@ -82,8 +82,8 @@ def plot_splatter(opname, operator, codomain, ax=None, margins=(margin,margin), 
     ax.set_yticks(range(int(ellmin),int(ellmax)+1))
     ax.set_aspect(aspect)
     ax.margins(*margins)
-    ax.set_xlabel('$k$')
-    ax.set_ylabel('$l$')
+    ax.set_xlabel('$Δk$')
+    ax.set_ylabel('$Δl$')
     ax.set_title(opname)
 
     if return_fig:
@@ -251,9 +251,9 @@ def asymptotic_operators():
 
 
 def main():
-#    differential_operators()
-#    radial_operators()
-#    conversion_operators()
+    differential_operators()
+    radial_operators()
+    conversion_operators()
     asymptotic_operators()
     plt.show()
 
