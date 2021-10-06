@@ -14,8 +14,10 @@ from spherinder import config
 config.default_normalize = False
 
 import spherinder.operators as sph
-from spherinder.eigtools import eigsort, plot_spectrum
+from spherinder.eigtools import eigsort, scipy_sparse_eigs, plot_spectrum
 from fileio import save_data, save_figure, plotspy
+
+import spherinder.asymptotic_operators as sao
 
 
 g_file_prefix = 'spherinder_inertial_waves'
@@ -127,36 +129,40 @@ def filename_prefix(directory='data'):
     return os.path.join(basepath, os.path.join(prefix, prefix))
 
 
-def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data'):
-    truncstr = '-truncated'
-    return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{truncstr}.pckl'
+def pickle_filename(m, Lmax, Nmax, boundary_method, directory='data', evalue_target=None):
+    evstr = '' if evalue_target is None else f'-λ={evalue_target:1.5f}'
+    return filename_prefix(directory) + f'-evalues-m={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{evstr}.pckl'
 
 
-def solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy):
+def solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy, evalue_target=None):
     # Construct the system
     M, L = matrices(m, Lmax, Nmax, boundary_method)
 
     if plot_spy:
         fig, plot_axes = plotspy(L, M)
-        truncstr = '-truncated'
-        filename = filename_prefix('figures') + f'-m={m}-Lmax={Lmax}-Nmax={Nmax}{truncstr}-spy.png'
+        filename = filename_prefix('figures') + f'-m={m}-Lmax={Lmax}-Nmax={Nmax}-spy.png'
         save_figure(filename, fig)
         plt.show()
 
     # Compute the eigenvalues and eigenvectors
     print('Eigenvalue problem, size {}'.format(np.shape(L)))
-    evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
-    evalues = -evalues  # Flip the sign to match Greenspan
+    if evalue_target is None:
+        evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
+        evalues = -evalues  # Flip the sign to match Greenspan
+    else:
+        matsolver = 'UmfpackFactorized'
+        evalues, evectors = scipy_sparse_eigs(L, M, N=4, target=-evalue_target, matsolver=matsolver, profile=True)
+        evalues = -evalues  # Flip the sign to match Greenspan
 
     # Output data
     data = {'m': m, 'Lmax': Lmax, 'Nmax': Nmax, 
             'boundary_method': boundary_method,
             'evalues': evalues, 'evectors': evectors}
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target)
     save_data(filename, data)
 
 
-def expand_evectors(Lmax, Nmax, vec, s, eta, bases):
+def expand_evectors(Lmax, Nmax, vec, s, eta, bases, return_coeffs=False):
     bases = [bases['up'], bases['um'], bases['uz'], bases['p']]
 
     # Extract the coefficients
@@ -175,15 +181,19 @@ def expand_evectors(Lmax, Nmax, vec, s, eta, bases):
     ss, ee = s[np.newaxis,:], eta[:,np.newaxis]
     ur = ss * u + ee * np.sqrt(1-ss**2) * w 
 
-    return u, v, w, p, tau, ur
+    if return_coeffs:
+        return u, v, w, p, tau, ur, coeffs
+    else:
+        return u, v, w, p, tau, ur
 
 
 def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, bases):
     evalue, evector = evalues[index], evectors[:,index]
-    u, v, w, p, tau, ur = expand_evectors(Lmax, Nmax, evector, s, eta, bases)
+    u, v, w, p, tau, ur, coeffs = expand_evectors(Lmax, Nmax, evector, s, eta, bases, return_coeffs=True)
 
-    field_indices = [3,4]
     fields = [u,v,w,p,ur]
+    """
+    field_indices = [3,4]
     field_names = ['u','v','w','p','u_r']
 
     print('Tau norm: {}'.format(np.linalg.norm(tau)))
@@ -224,9 +234,94 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
     fig.suptitle('λ = {:1.4f}'.format(evalue))
     fig.set_tight_layout(True)
     fig.show()
+    """
+
+    # Get grid and coefficient data
+    field_index = 3
+    fgrid, fcoeff = fields[field_index], coeffs[field_index]
+
+    fnorm = np.linalg.norm(fcoeff)
+
+    lengths, offsets = sph.coeff_sizes(Lmax, Nmax)
+    pruned = []
+    for ell in range(Lmax):
+        final = offsets[ell]+lengths[ell]
+
+        nprune = 2
+        for n in range(nprune):
+            pruned.append(fcoeff[final-nprune+n])
+        fcoeff[final-nprune:final] = 0
+
+    print(np.shape(pruned))
+    print(f'Pruned norm: {np.linalg.norm(pruned)}, Vector Norm: {fnorm}')
+
+    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0)
+    fgrid = bases['p2'].expand(conv @ fcoeff)
+
+    # Compute the Laplacian
+    lap = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
+    flap = bases['p2'].expand(lap @ fcoeff)
+
+    # Compute the horizontal Laplacian
+    laph = sao.horizontal_laplacian(m, Lmax, Nmax, alpha=0)
+    flaph = bases['p2'].expand(laph @ fcoeff)
+
+    # Compute the d/dphi**2 part of the Laplacian
+    fphiphi = -1/s**2 * m**2 * fgrid
+
+    solns, names = zip(*[(fgrid, 'p'), (flap, 'Lap(p)'), (flaph, 'HLap(p)'), (fphiphi, 'PhiLap(p)')])
+
+#    sindex = np.argmin(s < 0.7)
+    sindex = len(s)
+
+    # Plot them
+    fig, ax = plt.subplots(1,4, figsize=(15,5))
+    for i in range(4):
+        f = abs(solns[i])
+        sph.plotfield(s[:sindex], eta, f[:,:sindex], fig=fig, ax=ax[i], colorbar=True, stretch=True)
+        ax[i].set_title(r'${}$'.format(names[i]))
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    fig.set_tight_layout(True)
+    fig.show()
 
 
-def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
+def normalize_coeffs(c):
+    cmin, cmax = np.min(c), np.max(c)
+    scale = cmin if abs(cmin) > cmax else cmax
+    return c / scale
+
+
+def compute_coeff_error(bases, mode_index, evector):
+    m, Lmax, Nmax = bases['p'].m, bases['p'].Lmax, bases['p'].Nmax
+
+    def mode_fun(t, eta):
+        s = np.sqrt((1+t)/2)
+        z = np.sqrt(1-s**2)*eta[:,np.newaxis]
+        return greenspan.compute_eigenmode(s, z, *mode_index, normalize=True)
+
+    projected_coeffs = greenspan.project(mode_fun, m, Lmax, Nmax, alpha=0, sigma=0, Lquad=400, Nquad=400)
+    offsets = np.append(0, np.cumsum([bases[key].ncoeffs for key in ['up','um','uz','p']]))
+    pcoeff = evector[offsets[3]:offsets[4]]
+    lengths, offsets = sph.coeff_sizes(Lmax, Nmax)
+    pcoeff_full = np.zeros((Lmax,Nmax),dtype=pcoeff.dtype)
+    for l in range(Lmax):
+        pcoeff_full[l,:lengths[l]] = pcoeff[offsets[l]:offsets[l]+lengths[l]]
+
+    projected_coeffs = normalize_coeffs(projected_coeffs)
+    pcoeff_full = normalize_coeffs(pcoeff_full)
+    coeff_error_m, coeff_error_p = projected_coeffs - pcoeff_full, projected_coeffs + pcoeff_full
+    if np.max(abs(coeff_error_m)) > np.max(abs(coeff_error_p)):
+        coeff_error = coeff_error_p
+        pcoeff_full = -pcoeff_full
+    else:
+        coeff_error = coeff_error_m
+    return coeff_error, projected_coeffs, pcoeff_full
+
+
+def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields, evalue_target=None):
     save_plots = True
     if m > 30:
         n = m+61
@@ -235,8 +330,14 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     num_modes = 6
     modes = list(zip([n]*num_modes, range(num_modes)))
 
+    which_mode = 1
+    modes = [modes[which_mode]]
+    num_modes = len(modes)
+
+    dense_solve = evalue_target is None
+
     # Load the data
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target)
     data = pickle.load(open(filename, 'rb'))
 
     # Extract configuration parameters
@@ -247,8 +348,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
     else:
         def save(fn, fig): pass
 
-    truncstr = '-truncated'
-    configstr = f'm={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}{truncstr}'
+    configstr = f'm={m}-Lmax={Lmax}-Nmax={Nmax}-{boundary_method}'
     prefix = filename_prefix('figures')
 
     nlarge = len(np.where(np.abs(evalues.real) > 2)[0])
@@ -266,13 +366,14 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         print('        - Maximum imaginary part: {}'.format(maximag))
 
     # Construct the bases
-    ns, neta = 256, 257
+    ns, neta = 1024, 512+1
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     Lmaxw, Nmaxw = vertical_velocity_size(Lmax, Nmax)
     bases = {'up': sph.Basis(s, eta, m, Lmax, Nmax, sigma=+1, alpha=1),
              'um': sph.Basis(s, eta, m, Lmax, Nmax, sigma=-1, alpha=1),
              'uz': sph.Basis(s, eta, m, Lmaxw, Nmaxw, sigma=0, alpha=1),
-             'p':  sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0)}
+             'p':  sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=0),
+             'p2': sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=2)}
 
     evalues, evectors = evalues[indices], evectors[:,indices]
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, bases)
@@ -291,6 +392,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
 
     # Get the target eigenpair
     fig, ax = plt.subplots(1,len(modes),figsize=(3*num_modes-1,5))
+    if num_modes == 1:
+        ax = [ax]
     for i, (n, ell) in enumerate(modes):
         # Compute the analytic eigenfrequency
         mode_index = (n,(n-m)//2-ell,m)
@@ -298,7 +401,7 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         index = np.argmin(abs(evalues - evalue_target))
         evalue, evector = evalues[index], evectors[:,index]
     
-        print('Plotting eigenvector with eigenvalue {:1.4f}'.format(evalue))
+        print('Plotting eigenvector with eigenvalue {:1.8f}, resolution = {}'.format(evalue_target,(Lmax,Nmax)))
         u, v, w, p, tau, ur = expand_evectors(Lmax, Nmax, evector, s, eta, bases)
    
         # Plot the pressure field
@@ -317,22 +420,41 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
         k = mode_index[1]
         panalytic = greenspan.compute_eigenmode(ss, zz, n, k, m)
 
+        # Compute the coefficient-space error
+        coeff_error, projected_coeffs, pcoeff_full = compute_coeff_error(bases, mode_index, evector)
+
+        coeff_fig, coeff_ax = plt.subplots()
+        Nsizes = sph.Nsizes(Lmax, Nmax)
+        for l in range(0,Lmax,2):
+            c = coeff_error[l,:Nsizes[l]]
+            coeff_ax.semilogy(abs(c))
+        coeff_ax.grid(True)
+        coeff_ax.set_xlabel('Radial Degree')
+        coeff_ax.set_ylabel('Absolute Error')
+        coeff_ax.set_title('Coefficient Error')
+        dense = 'dense' if dense_solve else 'sparse'
+        coeff_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        filename = prefix + '-coeff_error-' + configstr + f'-n={n}-ell={ell}-{dense}.png'
+        save(filename, coeff_fig)
+
+        print('    Projected coefficient l2 error: {:1.5e}'.format(np.linalg.norm((coeff_error).ravel())))
+
         p /= np.max(abs(p))
         if np.max(abs(panalytic-p)) > np.max(abs(panalytic+p)):
             p *= -1
     
         # Compute the analytic eigenfrequency
         error_evalue = evalue_target - evalue
-        print('    Eigenvalue error: ', error_evalue)
+        print(f'    Eigenvalue error: {abs(error_evalue):1.5e}')
 
         error = panalytic - p.real
-        print('    Eigenfunction error: ',np.max(abs(error)))
+        print(f'    Eigenfunction error: {np.max(abs(error)):1.5e}')
 
         # Spherical radial velocity component
         bc_error_top = np.max(np.abs(ur[-1,:]))
         bc_error_bot = np.max(np.abs(ur[ 0,:]))
-        print('    Top    boundary error: {:1.3e}'.format(bc_error_top))
-        print('    Bottom boundary error: {:1.3e}'.format(bc_error_bot))
+        print(f'    Top    boundary error: {bc_error_top:1.3e}')
+        print(f'    Bottom boundary error: {bc_error_bot:1.3e}')
 
         # Error plot
         plot_error = False
@@ -343,113 +465,147 @@ def plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields):
             sph.plotfield(s.ravel(), eta.ravel(), error)
             plt.title('error')
 
-    filename = prefix + '-evectors-' + configstr + f'-n={n}-p.png'
+        # plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, bases)
+
+    suffix = 'dense' if evalue_target is None else 'sparse'
+    filename = prefix + '-evectors-' + configstr + f'-n={n}-p-{suffix}.png'
     save(filename, fig)
 
 
-def analyze_resolution():
-    m = 30
+def analyze_resolution(m):
     boundary_method = 'tau'
 
-    if m == 95:
-        n = m+61
-        Lmax_values = [14,18,22,26,30]
-        Nmax_values = [28,32,36,40,44,48,52,56,60]
+    if m == 30:
+        Nmax, n = 24, 60
     else:
-        n = 60
-        Lmax_values = [10,14,18,22,26]
-        Nmax_values = [12,16,20,24,28,32,36,40,44,48,52,56,60]
-    mode_targets = [(n,(n-m)//2-i,m) for i in range(4)]
+        Nmax, n = 32, m+61
+    Lmax_values = list(range(8,42,2))
+
+    num_modes = 6
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
     evalue_targets = [2*greenspan.compute_eigenvalues(i[0], i[2])[i[1]-1] for i in mode_targets]
 
-    errors = np.zeros((len(evalue_targets),len(Lmax_values),len(Nmax_values)))
+    errors = np.zeros((len(evalue_targets),len(Lmax_values)))
     for i,Lmax in enumerate(Lmax_values):
-        for j,Nmax in enumerate(Nmax_values):
+        for k,evalue_target in enumerate(evalue_targets):
             # Load the data
-            filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+            filename = pickle_filename(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target)
             data = pickle.load(open(filename, 'rb'))
             evalues, evectors = data['evalues'], data['evectors']
 
-            for k,evalue_target in enumerate(evalue_targets):
-                # Compute the eigenvalue error
-                index = np.argmin(abs(evalues - evalue_target))
-                evalue, evector = evalues[index], evectors[:,index]
-                error = evalue-evalue_target
-                errors[k,i,j] = abs(error)
+            # Compute the eigenvalue error
+            index = np.argmin(abs(evalues - evalue_target))
+            evalue, evector = evalues[index], evectors[:,index]
+            error = evalue-evalue_target
+            errors[k,i] = abs(error)
 
+    fig, ax = plt.subplots()
+    markers = ['o', 'v', 's', 'P', 'X', 'D']
+    for k in range(num_modes):
+        ax.semilogy(Lmax_values, errors[k].ravel(), label=f'λ = {evalue_targets[k]:1.4f}', marker=markers[k])
+    ax.set_xlabel(r'$L_{\mathregular{max}}$')
+    ax.set_ylabel('Absolute Error')
+    ax.set_title(f'm = {m}')
+    ax.legend(loc='upper right')
+    ax.grid(True)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-    prefix = filename_prefix('figures')
-
-    for k,evalue in enumerate(evalue_targets):
-        mode_prefix = prefix + f'-m={m}-evalue={evalue:1.2f}'
-
-        fig, ax = plt.subplots()
-
-        # Plotting niceties
-        markers = ['s','o','d','^','X','h','p','P','*','v','<','>']
-        for i,Lmax in enumerate(Lmax_values):
-            marker = markers[i]
-            ax.semilogy(Nmax_values, errors[k,i,:], f'-{marker}', label=f'Lmax={Lmax}')
-
-        ax.legend(loc='upper left')
-        ax.grid(True)
-        ax.set_title(f'Eigenvalue Error, m = {m}, λ = {evalue:1.4f}')
-        ax.set_xlabel('Nmax')
-        ax.set_ylabel('Error')
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-
-        # Save the figure
-        filename = mode_prefix + f'-evalue_error.png'
-        save_figure(filename, fig)
+    prefix = filename_prefix(directory='figures')
+    filename = prefix + f'-evalue_error-vs-Lmax-m={m}-n={n}-Nmax={Nmax}.png'
+    save_figure(filename, fig)
 
     plt.show()
 
 
-def _solve_helper(m, Lmax, Nmax):
+def _solve_helper(m, Lmax, Nmax, evalue_target):
     boundary_method = 'tau'
 
     # Skip if we already have it
-    filename = pickle_filename(m, Lmax, Nmax, boundary_method)
+    filename = pickle_filename(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target)
     if os.path.exists(filename):
         print('  Already solved')
         return
 
-    solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy=False)
+    solve_eigenproblem(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target, plot_spy=False)
 
 
 def solve():
-    m_values = [30]
-    Lmax_values = [10,14,18,22,26,30]
-    Nmax_values = [12,16,20,24,28,32,36,40,44,48,52,56,60]
-    configs = itertools.product(m_values,Lmax_values,Nmax_values)
+    m, num_modes = 95, 6
+    Lmax_values = list(range(4,42,2))
+    if m == 30:
+        Nmax_values = [24]
+        n = 60
+    else:
+        Nmax_values = [32]
+        n = m+61
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+    evalue_targets = [2*greenspan.compute_eigenvalues(i[0], i[2])[i[1]-1] for i in mode_targets]
+    configs = itertools.product([m], Lmax_values, Nmax_values, evalue_targets)
 
     pool = mp.Pool(mp.cpu_count()-1)
     pool.starmap(_solve_helper, configs)
 
 
+def plot_greenspan_modes(m, n, num_modes):
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+
+    s, eta = np.linspace(0,1,1024), np.linspace(-1,1,513)
+    z = np.sqrt(1-s[np.newaxis,:]**2) * eta[:,np.newaxis]
+
+    fig, ax = plt.subplots(2,num_modes, figsize=(12.75,8))
+    for i, mode_target in enumerate(mode_targets):
+        evalue = 2*greenspan.compute_eigenvalues(mode_target[0], mode_target[2])[mode_target[1]-1]
+        mode = greenspan.compute_eigenmode(s, z, *mode_target, normalize=True)
+
+        sph.plotfield(s, eta, mode, fig=fig, ax=ax[0][i], colorbar=False)
+        sph.plotfield(s, eta, mode, fig=fig, ax=ax[1][i], colorbar=False, stretch=True)
+        ax[0][i].set_title(f'λ = {evalue:1.4f}')
+        ax[0][i].set_xticklabels([])
+        ax[0][i].set_xlabel(None)
+        if i > 0:
+            ax[0][i].set_yticklabels([])
+            ax[0][i].set_ylabel(None)
+            ax[1][i].set_yticklabels([])
+            ax[1][i].set_ylabel(None)
+
+    prefix = filename_prefix(directory='figures')
+    filename = prefix + f'-m={m}-n={n}-greenspan_solutions.png'
+    save_figure(filename, fig)
+
+
 def main():
     solve = True
-    plot_evalues = True
+    plot_evalues = False
     plot_fields = True
-    plot_spy = True
+    plot_spy = False
 
-    m = 95
-    Lmax, Nmax = 10, 10
+    m = 30
+    resolutions = [(16,16),(18,20),(18,24),(18,32),(32,32),(40,40)]
     boundary_method = 'tau'
 
+    evalue_target = -0.13933425
+#    evalue_target = None
+
     print(f'Inertial Waves, m = {m}')
-    print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
 
-    if solve:
-        solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy)
+    for Lmax,Nmax in resolutions:
+        print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
+        if solve:
+            solve_eigenproblem(m, Lmax, Nmax, boundary_method, plot_spy, evalue_target=evalue_target)
 
-    if plot_fields or plot_evalues:
-        plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields)
-        plt.show()
+        if plot_fields or plot_evalues:
+            plot_solution(m, Lmax, Nmax, boundary_method, plot_evalues, plot_fields, evalue_target=evalue_target)
+    plt.show()
 
 
 if __name__=='__main__':
-    main()
-#    solve()
-#    analyze_resolution()
+#    main()
+    solve()
+    analyze_resolution(30)
+    analyze_resolution(95)
+
+#    plot_greenspan_modes(30, 60, 6)
+#    plot_greenspan_modes(95, 95+61, 6)
+    plt.show()
+
 
