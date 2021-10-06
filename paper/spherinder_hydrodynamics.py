@@ -12,6 +12,8 @@ import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
 
+import spherinder.asymptotic_operators as sao
+
 
 g_file_prefix = 'spherinder_hydrodynamics'
 
@@ -163,9 +165,8 @@ def make_filename_prefix(directory='data'):
 
 
 def output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory, ext, prefix='evalues', nev=None):
-    truncstr = '-truncated'
     nevstr = f'-nev={nev}' if nev else ''
-    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}{truncstr}{nevstr}' + ext
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}-Ekman={Ekman:1.4e}-{boundary_method}{nevstr}' + ext
 
 
 def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target):
@@ -334,6 +335,50 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev):
     save_figure(plot_filename, fig)
 
 
+def create_laplacian_basis(s, eta, basis):
+    m, Lmax, Nmax, alpha = basis.m, basis.Lmax, basis.Nmax, basis.alpha
+    return sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=alpha+2, galerkin=False)
+
+
+def make_laplacian_operators(basis):
+    m, Lmax, Nmax, alpha = basis.m, basis.Lmax, basis.Nmax, basis.alpha
+
+    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha, sigma=0)
+    lapfull = sph.operator('laplacian')(m, Lmax, Nmax, alpha)
+    laph = sao.horizontal_laplacian(m, Lmax, Nmax, alpha)
+    lapz = lapfull - laph
+    operators = {'Mode': conv, 'Horizontal Laplacian': laph, 'Vertical Laplacian': lapz}
+
+    # Flush to zero
+    operators = {key: sph.eliminate_zeros(op, tol=1e-13) for (key, op) in operators.items()}
+    return operators
+
+
+def compute_laplacian_parts(operators, lapbasis, coeffs):
+    results = {key: lapbasis.expand(op @ coeffs) for (key, op) in operators.items()}
+
+    m, s = lapbasis.m, lapbasis.s
+    lapphi = -m**2/s**2 * results['Mode']
+    laps = results.pop('Horizontal Laplacian') - lapphi
+    results['Radial Laplacian'] = laps
+    results['Azimuthal Laplacian'] = lapphi
+
+    return results
+
+
+def boundary_layer_thickness(s, eta, field, decay=0.1, relative=True):
+    if eta[0] < eta[-1]:
+        eta, field = [np.flipud(a) for a in [eta[:,np.newaxis], field]]
+    absfield = abs(field)
+    if relative:
+        maxvals = np.max(absfield, axis=0)
+    else:
+        maxvals = np.max(absfield)
+    field_scaled = absfield / maxvals  # Each column of the field scaled by its max
+    indices = np.argmin(field_scaled <= decay , axis=0)
+    return (1 - eta[indices].ravel()) * np.sqrt(1-s**2)
+
+
 def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
     # Load the data
     filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl', nev=nev)
@@ -343,8 +388,13 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
     evalues, evectors = data['evalues'], data['evectors']
 
     # Plot callback
-    ns, neta = 256, 255
-    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+#    ns, neta = 256, 257
+    ns, neta = 1024, 9
+    zoom = False
+    if zoom:
+        s, eta = np.linspace(0.4,1.0,ns+1)[1:], np.linspace(0.9,1.0,neta)
+    else:
+        s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases)
 
@@ -374,6 +424,7 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
         evalue_indices = [np.argmin(np.abs(t-evalues)) for t in evalue_targets]
         evalue_targets = evalues[evalue_indices]
 
+    """
     # Plot the zoomed spectrum
     fig, ax = plot_spectrum(evalues, onpick=onpick)
     if evalue_targets is not None:
@@ -392,7 +443,9 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
 
     if evalue_targets is None:
         return
+    """
 
+    """
     nrows = 1
     ncols = 6
     fig, plot_axes = plt.subplots(nrows,ncols,figsize=(2.75*ncols,5*nrows))
@@ -400,7 +453,6 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
         plot_axes = [plot_axes]
     for i, index in enumerate(evalue_indices):
         evalue, evector = evalues[index], evectors[:,index]
-
         u, v, w, p, tau = expand_evectors(Lmax, Nmax, evector, bases)
 
         relative_real = np.linalg.norm(np.real(p))/np.linalg.norm(p)
@@ -410,7 +462,6 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
         row, col = i//ncols, i%ncols
         ax = plot_axes[row][col]
         sph.plotfield(s, eta, p, fig=fig, ax=ax, colorbar=False)
-#        ax.set_xlim([0,1])
         estr = f'{evalue:.4f}'.replace('j','i')
         ax.set_title(f'$\lambda = ${estr}')
         if col > 0:
@@ -422,6 +473,124 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
 
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', prefix='evectors', ext='.png')
     save_figure(plot_filename, fig)
+    """
+
+    plot_laplacian = False
+    plot_abs, plot_log, stretch = False, False, True
+#    which_modes = slice(4, 5)
+    which_modes = slice(3, 4)
+
+    ss, ee = s[np.newaxis,:], eta[:,np.newaxis]
+    zz = np.sqrt(1-ss**2)*ee
+    rr = np.sqrt(ss**2 + zz**2)
+
+    Sp, Sm, Sz = [sph.operator('1-r**2')(m, Lmax, Nmax, alpha=2, sigma=sigma, exact=True) for sigma in [+1, -1, 0]]
+    dalpha = 2 if plot_laplacian else 0
+    basis = [sph.Basis(s, eta, m, Lmax+2, Nmax+1, alpha=1+dalpha, sigma=sigma) for sigma in [+1, -1, 0]]
+    basis += [sph.Basis(s, eta, m, Lmax, Nmax, alpha=2+dalpha, sigma=0)]
+
+    op = sph.operator('laplacian', field='vector')(m, Lmax+2, Nmax+1, alpha=1)
+    op = op + (sph.operator('laplacian')(m, Lmax, Nmax, alpha=2),)
+
+    evalue_indices = evalue_indices[which_modes]
+    for index in evalue_indices:
+        evalue, evector = evalues[index], evectors[:,index]
+
+        # Extract the coefficients from the eigenvector
+        offsets = np.append(0, np.cumsum([bases[a].ncoeffs for a in ['up', 'um', 'uz', 'p']]))
+        upcoeff, umcoeff, uzcoeff, pcoeff = [evector[offsets[i]:offsets[i+1]] for i in range(4)]
+        if not use_full_vertical_velocity:
+            uzcoeff = np.append(uzcoeff, np.zeros(len(upcoeff)-len(uzcoeff)))
+
+        pgrid = bases['p'].expand(pcoeff)
+        scale = np.max(abs(pgrid))
+
+        # Convert from the Galerkin basis to the standard basis
+        upcoeff, umcoeff, uzcoeff = [a[0] @ a[1] for a in zip([Sp, Sm, Sz], [upcoeff, umcoeff, uzcoeff])]
+
+        # Compute the Laplacian of the fields
+        coeff = [upcoeff, umcoeff, uzcoeff,pcoeff]
+        if plot_laplacian:
+            coeff = [op[i] @ c for (i,c) in enumerate(coeff)]
+        up, um, uz, p = [basis[i].expand(coeff[i]) for i in range(4)]
+        u, v, w = np.sqrt(0.5)*(up + um), -1j * np.sqrt(0.5)*(up - um), uz
+        ur = (ss*u + zz*w)/rr
+
+        titles = [r'$Δ p$', r'$e_{s} \cdot Δ u$', r'$e_{\phi} \cdot Δ u$', r'$e_{z} \cdot Δ u$', r'$e_{r} \cdot Δ u$']
+        if not plot_laplacian:
+            titles = [title.replace('Δ','') for title in titles]
+
+        # Plot the boundary layer thicknesses
+        if False and not plot_laplacian:
+            labels = ['$e_{s} \cdot u$', r'$e_{\phi} \cdot u$', '$e_{z} \cdot u$', '$e_{r} \cdot u$']
+            deltas = [boundary_layer_thickness(s, eta, field) for field in [u, v, w, ur]]
+            fig, ax = plt.subplots()
+            for delta, label in zip(deltas, labels):
+#                ax.plot(s, delta, label=label)
+                ax.semilogy(s, delta, label=label)
+            ax.set_xlabel('s')
+            ax.set_ylabel('z')
+            ax.set_title('Boundary Layer Thickness')
+            ax.grid(True)
+            ax.legend(loc='upper left')
+            fig.set_tight_layout(True)
+
+
+        if True:
+            fig, ax = plt.subplots(1,4,figsize=(15,4))
+            ax[0].plot(np.arcsin(s), np.real(p[len(eta)//2,:]))
+            ax[0].set_ylabel('Amplitude')
+            ax[0].set_title('$Re(p)$')
+            ax[1].plot(np.arcsin(s), np.real(u[len(eta)//2,:]))
+            ax[1].set_title('$Re(e_{s} \cdot u)$')
+            ax[2].plot(np.arcsin(s), np.real(v[len(eta)//2,:]))
+            ax[2].set_title('$Re(e_{\phi} \cdot u)$')
+            ax[3].plot(np.arcsin(s), np.real(ur[len(eta)//2,:]))
+            ax[3].set_title('$Re(e_{r} \cdot u)$')
+            for a in ax:
+                a.grid(True)
+                a.set_xlabel(r'$\arcsin{(s)}$')
+            fig.set_tight_layout(True)
+
+        # Plot the fields
+        fig, ax = plt.subplots(1,5, figsize=(14, 5))
+        for ii, field in enumerate([p, u, v, w, ur]):
+            field = field/scale
+            if plot_abs:
+                field = abs(field)
+            else:
+#                norms = [np.linalg.norm(a) for a in [field.real, field.imag]]
+#                plot_real = norms[0] >= norms[1]
+                plot_real = True
+                field = field.real if plot_real else field.imag
+
+            if plot_log:
+                field = np.log10(abs(field))
+
+            cbar_format = 'log' if plot_laplacian and not plot_log else None
+            cmap = 'RdBu'
+            sph.plotfield(s, eta, field, stretch=stretch, aspect=None, fig=fig, ax=ax[ii], cmap=cmap, cbar_format=cbar_format)
+            title = titles[ii]
+            if plot_abs:
+                title = r'$\left|' + title.replace('$','') + r'\right|$'
+            else:
+                re = 'Re' if plot_real else 'Im'
+                title = f'${re}' + r'\left(' + title.replace('$','') + r'\right)$'
+            if plot_log:
+                title = r'$log_{10} {' + title.replace('$','') + r'}$'
+            ax[ii].set_title(title)
+            if ii > 0:
+                ax[ii].set_yticklabels([])
+                ax[ii].set_ylabel(None)
+
+        suffix = 'abs' if plot_abs else 'real'
+        if plot_log:
+            suffix = 'log' + suffix
+        if zoom:
+            suffix += '-zoom'
+        prefix = 'laplacian' if plot_laplacian else 'fields'
+        plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', prefix=prefix, ext=f'-{suffix}.png')
+        save_figure(plot_filename, fig)
 
 
 def main():
@@ -433,8 +602,8 @@ def main():
 
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 60, 60, 'all', None
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 160, 240, 1000, -0.01934+0.11290j
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 160, 240, 1000, -0.01934+0.11290j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 4000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
