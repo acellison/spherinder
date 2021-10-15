@@ -155,6 +155,9 @@ def solve_eigenproblem(B, m, domain, config, nev, boundary_condition='stress-fre
         matsolver = 'SuperluColamdFactorized'
         evalues, evectors = scipy_sparse_eigs(Amat, Bmat, N=nev, target=lamtarget, matsolver=matsolver, profile=True)
 
+        print('Most critical eigenvalue: ', evalues[-1])
+        print(f'                   omega: {evalues[-1].imag*Ekman**(2/3):1.5f}')
+
     # Output data
     data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max,
             'boundary_condition': boundary_condition,
@@ -221,7 +224,11 @@ def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_fact
     # Extract configuration parameters
     evalues, evectors = data['evalues'], data['evectors']
 
-    plot_fields = True
+    print('Most critical eigenvalue: ', evalues[-1])
+    print(f'                   omega: {evalues[-1].imag*Ekman**(2/3):1.5f}')
+    return
+
+    plot_fields = False
     if plot_fields:
         onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, B, m, domain)
     else:
@@ -239,16 +246,16 @@ def plot_solution(B, m, domain, config, boundary_condition, thermal_forcing_fact
 
 
 def rotation_configs():
-    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.43346, 'Rayleigh': 5.1549, 'Lmax': 32,  'Nmax': 31},
-            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 32,  'Nmax': 31},
-            {'Ekman': 10**-5,   'm': 14, 'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 48,  'Nmax': 47},
-            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.45760, 'Rayleigh': 4.3937, 'Lmax': 92,  'Nmax': 63},
-            {'Ekman': 10**-6,   'm': 30, 'omega': -.46394, 'Rayleigh': 4.3021, 'Lmax': 122, 'Nmax': 83},
-            {'Ekman': 10**-6.5, 'm': 44, 'omega': -.46574, 'Rayleigh': 4.2416, 'Lmax': 152, 'Nmax': 101},
-            {'Ekman': 10**-7,   'm': 65, 'omega': -.46803, 'Rayleigh': 4.2012, 'Lmax': 232, 'Nmax': 171},
-            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.46828, 'Rayleigh': 4.1742, 'Lmax': 296, 'Nmax': 201},
-            {'Ekman': 10**-8,   'm': 139,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 500, 'Nmax': 500},
-            {'Ekman': 10**-10,  'm': 646,'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 1200, 'Nmax': 1200}
+    """No-slip critical configurations"""
+    return [{'Ekman': 10**-4,   'm': 6,  'omega': -.27009, 'Rayleigh': 5.0151,  'Lmax': 32,  'Nmax': 31},
+            {'Ekman': 10**-4.5, 'm': 9,  'omega': -.31035, 'Rayleigh': 4.6581,  'Lmax': 32,  'Nmax': 31},
+            {'Ekman': 10**-5,   'm': 13, 'omega': -.33901, 'Rayleigh': 4.4660,  'Lmax': 48,  'Nmax': 47},
+            {'Ekman': 10**-5.5, 'm': 20, 'omega': -.36778, 'Rayleigh': 4.3488,  'Lmax': 92,  'Nmax': 63},
+            {'Ekman': 10**-6,   'm': 30, 'omega': -.38930, 'Rayleigh': 4.2736,  'Lmax': 122, 'Nmax': 83},
+            {'Ekman': 10**-6.5, 'm': 44, 'omega': -.40439, 'Rayleigh': 4.22355, 'Lmax': 152, 'Nmax': 101},
+            {'Ekman': 10**-7,   'm': 65, 'omega': -.41737, 'Rayleigh': 4.19025, 'Lmax': 232, 'Nmax': 171},
+            {'Ekman': 10**-7.5, 'm': 95, 'omega': -.42658, 'Rayleigh': 4.16773, 'Lmax': 320, 'Nmax': 260},
+            {'Ekman': 10**-8,   'm': 139,'omega': -.43406, 'Rayleigh': 4.1527,  'Lmax': 400, 'Nmax': 340},   # NOT VERIFIED
             ]
 
 def _solve_helper(config_index):
@@ -361,18 +368,23 @@ def plot_modes():
 
 
 def main():
-    solve = False
-    plot = True
+    solve = True
+    plot = False
 
     boundary_condition = 'no-slip'
-    nev = 10
+    nev = 3
     thermal_forcing_factor = 1
 
-    configs = rotation_configs()
-    configs = configs[:8]
+    config_index = 7
+    resolution_ratio = 1.0
+    delta_m = 0
+
+    configs = [rotation_configs()[config_index]]
     for config in configs:
         # Extract the domain parameters
         m, L_max, N_max = config['m'], config['Lmax'], config['Nmax']
+        m = m+delta_m
+        L_max, N_max = [int(resolution_ratio*a) for a in [L_max, N_max]]
         if L_max < m:
             raise ValueError('No angular resolution: L_max (={}) is too small'.format(L_max))
 
@@ -391,7 +403,7 @@ def main():
 
 
 if __name__=='__main__':
-#    main()
+    main()
 #    solve()
-    plot_modes()
+#    plot_modes()
 
