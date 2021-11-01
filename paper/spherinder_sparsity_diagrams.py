@@ -250,11 +250,23 @@ def asymptotic_operators():
     w_equation()
 
 
+def boundary_operator():
+    m, Lmax, Nmax, alpha, sigma = 1, 10, 8, 0, 0
+    boundary = sph.Boundary()(m, Lmax, Nmax, alpha, sigma)
+    fig, ax = plt.subplots(figsize=plt.figaspect(0.3))
+    fig.set_tight_layout(True)
+    ax.spy(boundary)
+
+    filename = output_filename('figures', ext='.png', prefix='boundary')
+    save_figure(filename, fig)
+
+
 def main():
     differential_operators()
     radial_operators()
     conversion_operators()
     asymptotic_operators()
+    boundary_operator()
     plt.show()
 
 if __name__=='__main__':

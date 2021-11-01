@@ -56,6 +56,21 @@ def plotfield_full(m, s, eta, f, fig=None, ax=None, aspect='equal', cmap='RdBu',
         fig, ax = plt.subplots(figsize=(4.25,6))
 
     im = ax.pcolormesh(ss, yy, ff, cmap=cmap, shading='auto')
+
+    def plot_line(x, y):
+        eps = 0.0125
+        ax.plot(x, (1+eps)*np.array(y), 'k', linewidth=0.5)
+
+    xbox = np.linspace(-1,1, 2*len(s)+1)
+    if left_rect:
+        pred, xv = (xbox > 0), -1
+    else:
+        pred, xv = (xbox < 0), 1
+    ybox = np.where(pred, np.sqrt(1-xbox**2), 1.)
+    plot_line(xbox,  ybox)
+    plot_line(xbox, -ybox)
+    plot_line((xv,)*2, [-1, 1])
+
     if aspect is not None:
         ax.set_aspect(aspect, adjustable='datalim')
 
@@ -91,7 +106,7 @@ def plot_basis(fig, plot_axes, basis, m, ell, s, eta):
         ax.text(-1.0,-1.0, f'({m}, {ell}, {k})', fontsize=fontsize)
 
 def main():
-    ns, neta = 300, 301
+    ns, neta = 1024, 1025
     s, eta = np.linspace(0,1,ns), np.linspace(-1,1,neta)
 
     Nmax = 4
@@ -104,7 +119,7 @@ def main():
     fig, plot_axes = plt.subplots(nrows,ncols,figsize=figsize)
 
     for i, (m,ell) in enumerate(configs):
-        basis = Basis(s, eta, m, ell+1, Nmax, sigma=0, alpha=0, truncate=False)
+        basis = Basis(s, eta, m, ell+1, Nmax, sigma=0, alpha=-1/2, truncate=False)
         plot_basis(fig, plot_axes[i], basis, m, ell, s, eta)
         if i < nrows-1:
             for ax in plot_axes[i]:

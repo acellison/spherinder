@@ -2,7 +2,7 @@ import os
 import numpy as np
 from scipy.special import sph_harm
 from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm, colors
+from matplotlib import cm
 import matplotlib.pyplot as plt
 
 
