@@ -284,7 +284,8 @@ class Boundary(Operator):
             mat[:np.shape(op)[0],index:index+N] = op
             index += N
 
-        Opeven, Opodd = Opeven.astype(self.dtype), Opodd.astype(self.dtype)
+        norm_scale = np.sqrt(2**(2+alpha+1/2)) if self.normalize else 1.
+        Opeven, Opodd = [(norm_scale * mat).astype(self.dtype) for mat in [Opeven, Opodd]]
         if separate:
             return Opeven, Opodd
         else:
