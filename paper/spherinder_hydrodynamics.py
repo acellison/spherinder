@@ -206,7 +206,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, eva
             'boundary_method': boundary_method,
             'evalues': evalues, 'evectors': evectors,
             'Ekman': Ekman}
-    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl')
+    filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='data', ext='.pckl', nev=nev)
     save_data(filename, data)
 
 
@@ -325,11 +325,13 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev):
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=512, nphi=512)
+    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=1024, nphi=512)
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, equatorial_bases)
 
     # Eigenvalue plot
     fig, ax = plot_spectrum(evalues, onpick=onpick)
+    ax.set_xlim([-.1525, -0.0025])
+    ax.set_ylim([-.11, .21])
     ax.set_title('Spherinder Basis')
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
@@ -603,7 +605,8 @@ def main():
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 9, 10**-4, 24, 32, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 60, 60, 'all', None
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 14, 10**-5, 160, 240, 1000, -0.01934+0.11290j
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 4000, -0.0070738+0.060679j
 #    m, Ekman, Lmax, Nmax, nev, evalue_target = 95, 10**-7.5, 200, 200, 1000, -0.001181+0.019639j
 
@@ -616,8 +619,7 @@ def main():
         solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, evalue_target)
 
     if plot_fields or plot_evalues:
-#        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev=nev)
-        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev=nev)
+        plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev=nev)
         plt.show()
 
 
