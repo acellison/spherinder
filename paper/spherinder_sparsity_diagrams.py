@@ -1,4 +1,8 @@
 import numpy as np
+
+import matplotlib as mpl
+mpl.rcParams['mathtext.fontset'] = 'cm'
+
 import matplotlib.pyplot as plt
 import os
 
@@ -82,8 +86,8 @@ def plot_splatter(opname, operator, codomain, ax=None, margins=(margin,margin), 
     ax.set_yticks(range(int(ellmin),int(ellmax)+1))
     ax.set_aspect(aspect)
     ax.margins(*margins)
-    ax.set_xlabel('$Δk$')
-    ax.set_ylabel('$Δl$')
+    ax.set_xlabel(r'$Δ k$')
+    ax.set_ylabel(r'$Δ l$')
     ax.set_title(opname)
 
     if return_fig:
@@ -145,6 +149,29 @@ def differential_operators():
     plot_splatter(r'$\mathcal{L}$   (Laplacian)', Op, codomain, ax=ax[2], aspect=0.5)
 
     filename = output_filename('figures', ext='.png', prefix='differential_ops')
+    save_figure(filename, fig)
+
+
+def differential_operators_poster():
+    # Differential operators
+    figsize = plt.figaspect(0.5)
+    figsize = [0.8*a for a in figsize]
+    fig, ax = plt.subplots(1,2,figsize=figsize)
+
+    # Laplacian sparsity structure
+    operator = sph.operator('laplacian')
+    codomain = operator.codomain(Lmax,Nmax,alpha)
+    Op = operator(m,Lmax,Nmax,alpha)
+    plot_splatter(r'$\mathcal{L}$   (Laplacian)', Op, codomain, ax=ax[0], aspect=0.5)
+
+    # Gradient sparsity structure
+    operator = sph.operator('gradient')
+    codomain = [cd(Lmax,Nmax,alpha) for cd in operator.codomain]
+    Op = operator(m,Lmax,Nmax,alpha)
+    plot_splatter(r'$\mathcal{G}$   (Gradient)', Op, codomain, ax=ax[1])
+
+    fig.set_tight_layout(True)
+    filename = output_filename('figures', ext='.png', prefix='differential_ops-poster')
     save_figure(filename, fig)
 
 
@@ -263,6 +290,7 @@ def boundary_operator():
 
 def main():
     differential_operators()
+#    differential_operators_poster()
     radial_operators()
     conversion_operators()
     asymptotic_operators()
