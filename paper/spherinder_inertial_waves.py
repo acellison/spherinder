@@ -492,6 +492,7 @@ def analyze_resolution(m):
             filename = pickle_filename(m, Lmax, Nmax, boundary_method, evalue_target=evalue_target)
             data = pickle.load(open(filename, 'rb'))
             evalues, evectors = data['evalues'], data['evectors']
+            print(Lmax, np.shape(evectors))
 
             # Compute the eigenvalue error
             index = np.argmin(abs(evalues - evalue_target))
@@ -569,6 +570,52 @@ def plot_greenspan_modes_nostretch(m, n, num_modes):
     save_figure(filename, fig)
 
 
+def create_equatorial_domain(m, ns, nphi, stretch=False):
+    s = np.linspace(0,1,ns+1)[1:]
+
+    s, phi = s[np.newaxis,:], np.linspace(0,2*np.pi,nphi)[:,np.newaxis]
+    if stretch:
+        ss = np.arcsin(s)
+        radius = np.arcsin(1.)
+    else:
+        ss = s
+        radius = 1.
+    x, y, mode = ss*np.cos(phi), ss*np.sin(phi), np.exp(1j*m*phi)
+
+    return x, y, s, phi, mode, radius
+
+
+def plot_greenspan_modes_equatorial(m, n, num_modes):
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+
+    # Plot the equatorial slices
+    ns, nphi = 1024, 513
+    stretch = True
+    x, y, s, phi, mode, radius = create_equatorial_domain(m, ns, nphi, stretch=stretch)
+
+    fig, ax = plt.subplots(1,num_modes, figsize=plt.figaspect(1/num_modes))
+    for i, mode_target in enumerate(mode_targets):
+        evalue = 2*greenspan.compute_eigenvalues(mode_target[0], mode_target[2])[mode_target[1]-1]
+        f = mode * greenspan.compute_eigenmode(s, 0., *mode_target, normalize=True)
+
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+
+        im = ax[i].pcolormesh(x, y, f, cmap='RdBu', shading='gouraud')
+        ax[i].plot(radius*np.cos(phi), radius*np.sin(phi), color='k', linewidth=0.5, alpha=0.5)
+        ax[i].set_aspect(aspect='equal', adjustable='datalim')
+        ax[i].set_title(f'λ = {evalue:1.4f}')
+
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    fig.set_tight_layout(True)
+    prefix = filename_prefix(directory='figures')
+    stretchstr = '-arcsins' if stretch else ''
+    filename = prefix + f'-m={m}-n={n}-greenspan_solutions-equatorial{stretchstr}.png'
+    save_figure(filename, fig)
+
+
 def plot_greenspan_modes(m, n, num_modes):
     mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
 
@@ -631,8 +678,8 @@ if __name__=='__main__':
 #    plot_greenspan_modes(30, 60, 6)
 #    plot_greenspan_modes(95, 95+61, 6)
 
-    plot_greenspan_modes_nostretch(30, 60, 6)
-    plot_greenspan_modes_nostretch(95, 95+61, 6)
+    plot_greenspan_modes_nostretch(30, 60, 3)
+    plot_greenspan_modes_equatorial(30, 60, 3)
     plt.show()
 
 
