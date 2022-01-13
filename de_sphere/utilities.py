@@ -90,6 +90,8 @@ def plot_fields(fielddict, z, cos_theta, colorbar=True, fig=None, ax=None, cmap=
         ax.set_title(name)
         ax.set_aspect('equal')
 
+        fig.show()
+
 
 def checkdir(filename):
     path = os.path.dirname(os.path.abspath(filename))

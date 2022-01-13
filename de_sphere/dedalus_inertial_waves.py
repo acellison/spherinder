@@ -8,7 +8,7 @@ from dedalus_sphere import ball128, sphere128
 import boussinesq
 from state_vector import StateVector
 
-from spherinder.eigtools import eigsort, plot_spectrum
+from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 
 from utilities import build_ball, make_tensor_coeffs, expand_field, plot_fields
 from utilities import save_data, save_figure
@@ -166,11 +166,13 @@ def make_filename_prefix(directory='data'):
     return os.path.join(abspath, g_file_prefix)
 
 
-def output_filename(m, Lmax, Nmax, directory, ext, prefix='evalues'):
-    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}' + ext
+def output_filename(m, Lmax, Nmax, directory, ext, prefix='evalues', target=None, nev=None):
+    target = '' if target is None else f'-target={target:1.6e}'
+    nevstr = '' if nev is None else f'-nev={nev}'
+    return make_filename_prefix(directory) + f'-{prefix}-m={m}-Lmax={Lmax}-Nmax={Nmax}' + target + nevstr + ext
 
 
-def solve_eigenproblem(B, m, domain):
+def solve_eigenproblem(B, m, domain, target=None, nev=None):
     print(f'Computing Inertial Wave Solutions, m = {m}, L_max = {B.L_max}, N_max = {B.N_max}')
     alpha_BC = 0
 
@@ -184,12 +186,16 @@ def solve_eigenproblem(B, m, domain):
     # Compute eigenvalues
     print('  Solving eigenproblem for m = {}, L_max = {}, N_max = {}, size {}x{}'.format(
         m, B.L_max, B.N_max, np.shape(Amat)[0], np.shape(Amat)[1]))
-    evalues, evectors = eigsort(Amat.todense(), Bmat.todense())
+
+    if target is None:
+        evalues, evectors = eigsort(Amat.todense(), Bmat.todense())
+    else:
+        evalues, evectors = scipy_sparse_eigs(Amat, Bmat, nev, target)
 
     # Output data
     data = {'m': m, 'Lmax': B.L_max, 'Nmax': B.N_max,
             'evalues': evalues, 'evectors': evectors}
-    filename = output_filename(m, B.L_max, B.N_max, directory='data', ext='.pckl')
+    filename = output_filename(m, B.L_max, B.N_max, directory='data', ext='.pckl', target=target, nev=nev)
     save_data(filename, data)
 
 
@@ -254,14 +260,52 @@ def plot_solution(B, m, domain):
     fig.show()
 
 
+def analytic_evalues(m):
+    if m == 30:
+        return [-1.975248889289566920e-02,
+                -1.393342532393273825e-01,
+                -2.586597563023985136e-01,
+                -3.774466772326353636e-01,
+                -4.954201629497018700e-01,
+                -6.123169034033704161e-01]
+    elif m == 95:
+        return [-3.575229338583182925e-02,
+                -8.627334059822888701e-02,
+                -1.367794382900203165e-01,
+                -1.872574641542827933e-01,
+                -2.376945785408545730e-01,
+                -2.880783282402746281e-01]
+
+
+def analyze_resolution(B, m, domain):
+    evalue_targets = analytic_evalues(m)
+    nev = 3
+
+    which = 0
+    evalue_targets = [evalue_targets[which]]
+    for target in evalue_targets:
+        filename = output_filename(m, B.L_max, B.N_max, directory='data', ext='.pckl', target=target, nev=nev)
+        if not os.path.exists(filename):
+            solve_eigenproblem(B, m, domain, target=target, nev=nev)
+        data = pickle.load(open(filename, 'rb'))
+
+        # Extract configuration parameters
+        evalues, evectors = data['evalues'], data['evectors']
+
+        index = np.argmin(abs(evalues-target))
+        evalue = evalues[index]
+        error = abs(evalue-target)
+        print(f'm = {m}, Lmax = {B.L_max}, Nmax = {B.N_max}, target = {target}, error = {error}')
+
+
 def main():
-    solve = True
-    plot = True
+    solve = False
+    plot = False
 
     # Create the domain
-    m = 139
-    L_max = m+81
-    N_max = 110
+    m = 30
+    L_max = m+29
+    N_max = L_max//2
 
     # Extract the domain parameters
     if L_max < m:
@@ -276,6 +320,8 @@ def main():
     # Plot the solution
     if plot:
         plot_solution(B, m, domain)
+
+    analyze_resolution(B, m, domain)
 
     plt.show()
 
