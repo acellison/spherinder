@@ -142,11 +142,15 @@ def plot_mode(n, m, ell):
 
 
 def filename_prefix(Lmax, Nmax, n, m, ell):
-    if Lmax is None:
+    if Lmax is None or Nmax is None:
         LNstr = ''
     else:
         LNstr = f'-Lmax={Lmax}-Nmax={Nmax}'
-    return f'figures/{g_file_prefix}/greenspan_projections-mode_m={m}-n={n}-ell={ell}{LNstr}-'
+    if ell is None:
+        ellstr = ''
+    else:
+        ellstr = f'-ell={ell}'
+    return f'figures/{g_file_prefix}/greenspan_projections-mode_m={m}-n={n}{ellstr}{LNstr}-'
 
 
 def flatten(l):
@@ -272,9 +276,106 @@ def slice_mode(n, m, ell):
     save_figure(filename_prefix(None, None, n, m, ell) + 'profile.png', fig)
 
 
+def create_equatorial_domain(m, ns, nphi, stretch=False):
+    s = np.linspace(0,1,ns+1)[1:]
+
+    s, phi = s[np.newaxis,:], np.linspace(0,2*np.pi,nphi)[:,np.newaxis]
+    if stretch:
+        ss = np.arcsin(s)
+        radius = np.arcsin(1.)
+    else:
+        ss = s
+        radius = 1.
+    x, y, mode = ss*np.cos(phi), ss*np.sin(phi), np.exp(1j*m*phi)
+
+    return x, y, s, phi, mode, radius
+
+
+def plot_greenspan_modes_equatorial(m, n, num_modes):
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+
+    # Plot the equatorial slices
+    ns, nphi = 1024, 513
+    stretch = True
+    x, y, s, phi, mode, radius = create_equatorial_domain(m, ns, nphi, stretch=stretch)
+
+    fig, ax = plt.subplots(1,num_modes, figsize=plt.figaspect(1/num_modes))
+    for i, mode_target in enumerate(mode_targets):
+        evalue = 2*giw.compute_eigenvalues(mode_target[0], mode_target[2])[mode_target[1]-1]
+        f = mode * giw.compute_eigenmode(s, 0., *mode_target, normalize=True)
+
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+
+        im = ax[i].pcolormesh(x, y, f, cmap='RdBu', shading='gouraud')
+        ax[i].plot(radius*np.cos(phi), radius*np.sin(phi), color='k', linewidth=0.5, alpha=0.5)
+        ax[i].set_aspect(aspect='equal', adjustable='datalim')
+        ax[i].set_title(f'λ = {evalue:1.4f}')
+
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    fig.set_tight_layout(True)
+    prefix = filename_prefix(None, None, n, m, None)
+    stretchstr = '-arcsins' if stretch else ''
+    filename = prefix + f'-greenspan_solutions-equatorial{stretchstr}.png'
+    save_figure(filename, fig)
+
+
+def plot_greenspan_modes_nostretch(m, n, num_modes):
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+
+    s, eta = np.linspace(0,1,1024), np.linspace(-1,1,513)
+    z = np.sqrt(1-s[np.newaxis,:]**2) * eta[:,np.newaxis]
+
+    fig, ax = plt.subplots(1,num_modes, figsize=plt.figaspect(2/num_modes))
+    for i, mode_target in enumerate(mode_targets):
+        evalue = 2*giw.compute_eigenvalues(mode_target[0], mode_target[2])[mode_target[1]-1]
+        mode = giw.compute_eigenmode(s, z, *mode_target, normalize=True)
+
+        sph.plotfield(s, eta, mode, fig=fig, ax=ax[i], colorbar=False)
+        ax[i].set_title(f'λ = {evalue:1.4f}')
+        ax[i].set_xticks(np.linspace(0,1,3))
+        ax[i].set_xlabel('s')
+        if i > 0:
+            ax[i].set_yticklabels([])
+            ax[i].set_ylabel(None)
+
+    prefix = filename_prefix(None, None, n, m, None)
+    filename = prefix + f'-greenspan_solutions-nostretch.png'
+    save_figure(filename, fig)
+
+
+def plot_greenspan_modes(m, n, num_modes):
+    mode_targets = [(n,(n-m)//2-i,m) for i in range(num_modes)]
+
+    s, eta = np.linspace(0,1,1024), np.linspace(-1,1,513)
+    z = np.sqrt(1-s[np.newaxis,:]**2) * eta[:,np.newaxis]
+
+    fig, ax = plt.subplots(2,num_modes, figsize=(12.75,8))
+    for i, mode_target in enumerate(mode_targets):
+        evalue = 2*giw.compute_eigenvalues(mode_target[0], mode_target[2])[mode_target[1]-1]
+        mode = giw.compute_eigenmode(s, z, *mode_target, normalize=True)
+
+        sph.plotfield(s, eta, mode, fig=fig, ax=ax[0][i], colorbar=False)
+        sph.plotfield(s, eta, mode, fig=fig, ax=ax[1][i], colorbar=False, stretch=True)
+        ax[0][i].set_title(f'λ = {evalue:1.4f}')
+        ax[0][i].set_xticklabels([])
+        ax[0][i].set_xlabel(None)
+        ax[1][i].set_xticks(np.linspace(0,1,3))
+        if i > 0:
+            ax[0][i].set_yticklabels([])
+            ax[0][i].set_ylabel(None)
+            ax[1][i].set_yticklabels([])
+            ax[1][i].set_ylabel(None)
+
+    prefix = filename_prefix(None, None, n, m, None)
+    filename = prefix + f'-greenspan_solutions.png'
+    save_figure(filename, fig)
+
+
 def main():
     n, m, ell = 60, 30, 1
-#    n, m, ell = 191, 95, 1
 
     if False:
         ns, neta = 256, 257
@@ -283,16 +384,17 @@ def main():
         sph.plotfield(s.ravel(), eta.ravel(), mode)
 
     if False:
-#        compute_quadrature_errors(22, 22, 20, 10, 1)
         compute_quadrature_errors(22, 30, 60, 30, 1)
 
-    if True:
-#        project_greenspan_mode(40, 40, n, m, ell=0, plot=True)
+    if False:
         project_greenspan_mode(40, 40, n, m, ell=1, plot=True)
-#        project_greenspan_mode(17, 32, n, m, ell, plot=True, Lquad=400, Nquad=2000)
     
     if False:
         slice_mode(n, m, ell)
+
+    if True:
+        plot_greenspan_modes_nostretch(30, 60, 3)
+        plot_greenspan_modes_equatorial(30, 60, 3)
 
 
 if __name__=='__main__':
