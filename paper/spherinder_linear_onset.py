@@ -436,17 +436,32 @@ def plot_critical_modes():
     solve(nev)
 
     nrows, ncols = 2, 4
-    figsize = plt.figaspect(nrows/ncols) 
+    figsize = plt.figaspect(nrows/ncols)
     scale = 1.5
     figsize = scale*figsize[0]*0.65, scale*figsize[1]
     fig, plot_axes = plt.subplots(nrows, ncols, figsize=figsize)
 
+    figsize = plt.figaspect(nrows/ncols)
+    scale = 1.5
+    figsize = scale*figsize[0]*0.95, scale*figsize[1]
+    fig_eq, plot_axes_eq = plt.subplots(nrows, ncols, figsize=figsize)
+
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
 
-    t = np.linspace(0,np.pi,100)
+    t, t_eq = np.linspace(0,np.pi,100), np.linspace(0,2*np.pi,200)
     radius = 0.35
     circle_x, circle_y = radius*np.sin(t), -radius*np.cos(t)
+    circle_x_eq, circle_y_eq = radius*np.sin(t_eq), -radius*np.cos(t_eq)
+
+    field = 'T'
+    nplots = nrows*ncols
+    if nplots == 1:
+        configs = [configs[7]]
+        plot_axes = [[plot_axes]]
+        plot_axes_eq = [[plot_axes_eq]]
+    else:
+        configs = configs[:nrows*ncols]
 
     row, col = 0, 0
     for config in configs:
@@ -463,7 +478,6 @@ def plot_critical_modes():
         evalues, evectors = [data[a] for a in ['evalues', 'evectors']]
         evalue, evector = evalues[-1], evectors[:,-1]
 
-        field = 'T'
         d = expand_evectors(evector, bases, fields=[field], error_only=False, verbose=False)
         f = d[field].real if np.linalg.norm(d[field].real) >= np.linalg.norm(d[field].imag) else d[field].imag
 
@@ -474,7 +488,8 @@ def plot_critical_modes():
         cmap = 'RdBu_r' if field == 'T' else 'RdBu'
         sph.plotfield(s, eta, f, fig=fig, ax=ax, cmap=cmap, colorbar=False)
 
-        ax.plot(circle_x, circle_y, '--k', alpha=0.8, linewidth=1)
+        if nplots != 1:
+            ax.plot(circle_x, circle_y, '--k', alpha=0.8, linewidth=1)
 
         ax.set_yticks(np.linspace(-1,1,5))
         if col > 0:
@@ -486,16 +501,56 @@ def plot_critical_modes():
             ax.set_xticklabels([])
 
         logek = np.log10(Ekman)
-        ax.set_title('E = $10^{' + f'{logek:1.1f}' + '}$')
+        if nplots == 1:
+            title = 'Meridional Slice'
+            title_eq = 'Equatorial Slice'
+        else:
+            title = 'E = $10^{' + f'{logek:1.1f}' + '}$'
+            title_eq = title
+        ax.set_title(title)
 
+        # Plot the equatorial plane
+        bases_eq, x_eq, y_eq, phi_eq, mode_eq =  create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=1024, nphi=1024)
+        d = expand_evectors(evector, bases_eq, fields=[field], error_only=False, verbose=False)
+        f = mode_eq * d[field]
+        f = f.real if np.linalg.norm(f.real) >= np.linalg.norm(f.imag) else f.imag
+
+        ax = plot_axes_eq[row][col]
+        im = ax.pcolormesh(x_eq, y_eq, f, cmap='RdBu', shading='gouraud')
+        ax.plot(np.cos(phi_eq), np.sin(phi_eq), color='k', linewidth=0.5, alpha=0.5)
+        ax.set_aspect(aspect='equal', adjustable='datalim')
+        ax.set_title(title_eq)
+        if nplots != 1:
+            ax.plot(circle_x_eq, circle_y_eq, '--k', alpha=0.8, linewidth=1)
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+
+        ax.set_yticks(np.linspace(-1,1,5))
+        if col > 0:
+            ax.set_ylabel('')
+            ax.set_yticklabels([])
+        ax.set_xticks(np.linspace(-1,1,5))
+        if row < nrows-1:
+            ax.set_xlabel('')
+            ax.set_xticklabels([])
+
+        # Update the plot indices
         col += 1
         if col == ncols:
             col = 0
             row += 1
 
+    if nplots == 1:
+        name = f'-field={field}'
+    else:
+        name = f's-field={field}'
     fig.set_tight_layout(True)
-    filename = make_filename_prefix('figures') + '-critical_modes.png'
+    filename = make_filename_prefix('figures') + f'-critical_mode{name}.png'
     save_figure(filename, fig)
+
+    fig_eq.set_tight_layout(True)
+    filename = make_filename_prefix('figures') + f'-critical_mode{name}-equatorial.png'
+    save_figure(filename, fig_eq)
 
     plt.show()
 
