@@ -276,7 +276,8 @@ def plot_solution(B, m, domain, Ekman, boundary_condition):
         onpick = None
 
     fig, ax = plot_spectrum(evalues, onpick)
-    ax.set_xticks([-.14,-.1,-.06,-.02])
+    ax.set_xlim([-.1525, -0.0025])
+    ax.set_ylim([-.11, .21])
     ax.set_title('Dedalus Sphere Basis')
 
     plot_filename = output_filename(m, B.L_max, B.N_max, boundary_condition, Ekman, directory='figures', ext='.png')
@@ -291,7 +292,7 @@ def main():
 
     # Create the domain
 #    m, Ekman, L_max, N_max, nev, evalue_target = 14, 1e-5, 40, 40, 'all', None
-    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 275, 140, 1000, -0.0070738+0.060679j
+    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 280, 146, 1000, -0.0070738+0.060679j
 
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
