@@ -1,6 +1,7 @@
 import numpy as np
 import dedalus_sphere.jacobi as Jacobi
 import spherinder.config as config
+import spherinder.operators as sph
 
 
 def associated_legendre_nodes(n, m, dtype='float128', days=3):
@@ -79,6 +80,5 @@ def reconstruct(coeffs, t, eta, m, Lmax, Nmax, alpha, sigma, dtype='float128'):
         for k in range(Nmax):
             f += coeffs[ell,k] * Peta[ell][:,np.newaxis] * Pt[k][np.newaxis,:]
     return f
-
 
 
