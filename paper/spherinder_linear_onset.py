@@ -372,23 +372,6 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh, plot
 
 
 def rotation_configs():
-    """
-    return [{'Ekman': 10**-4,   'm': 6,    'omega': -.43346, 'Rayleigh': 5.1520, 'Lmax': 100, 'Nmax': 100},
-            {'Ekman': 10**-4.5, 'm': 9,    'omega': -.44276, 'Rayleigh': 4.7613, 'Lmax': 100, 'Nmax': 100},
-            {'Ekman': 10**-5,   'm': 14,   'omega': -.45715, 'Rayleigh': 4.5351, 'Lmax': 100, 'Nmax': 100},
-            {'Ekman': 10**-5.5, 'm': 20,   'omega': -.45760, 'Rayleigh': 4.3600, 'Lmax': 120, 'Nmax': 120},
-            {'Ekman': 10**-6,   'm': 30,   'omega': -.46394, 'Rayleigh': 4.2821, 'Lmax': 160, 'Nmax': 160},
-            {'Ekman': 10**-6.5, 'm': 44,   'omega': -.46574, 'Rayleigh': 4.2270, 'Lmax': 180, 'Nmax': 180},
-            {'Ekman': 10**-7,   'm': 65,   'omega': -.46803, 'Rayleigh': 4.1948, 'Lmax': 200, 'Nmax': 200},
-            {'Ekman': 10**-7.5, 'm': 95,   'omega': -.42660, 'Rayleigh': 4.1682, 'Lmax': 240, 'Nmax': 200},
-            {'Ekman': 10**-8,   'm': 139,  'omega': -.43406, 'Rayleigh': 4.1527, 'Lmax': 300, 'Nmax': 200},
-            {'Ekman': 10**-9,   'm': 300,  'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 240, 'Nmax': 300},
-            {'Ekman': 10**-10,  'm': 646,  'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 450, 'Nmax': 450},
-            {'Ekman': 10**-11,  'm': 1392, 'omega': -.43507, 'Rayleigh': 4.1527, 'Lmax': 580, 'Nmax': 400},
-            ]
-    """
-
-    # These are the results from Dedalus
     return [{'Ekman': 10**-4,   'm': 6,    'omega': -.27009, 'Rayleigh': 5.0151,  'Lmax': 100, 'Nmax': 100},
             {'Ekman': 10**-4.5, 'm': 9,    'omega': -.31035, 'Rayleigh': 4.6581,  'Lmax': 100, 'Nmax': 100},
             {'Ekman': 10**-5,   'm': 13,   'omega': -.33901, 'Rayleigh': 4.4660,  'Lmax': 100, 'Nmax': 100},
@@ -397,7 +380,6 @@ def rotation_configs():
             {'Ekman': 10**-6.5, 'm': 44,   'omega': -.40439, 'Rayleigh': 4.22355, 'Lmax': 180, 'Nmax': 180},
             {'Ekman': 10**-7,   'm': 65,   'omega': -.41737, 'Rayleigh': 4.19025, 'Lmax': 200, 'Nmax': 200},
             {'Ekman': 10**-7.5, 'm': 95,   'omega': -.42658, 'Rayleigh': 4.16773, 'Lmax': 300, 'Nmax': 240},
-#            {'Ekman': 10**-8,   'm': 139,  'omega': -.43406, 'Rayleigh': 4.1527,  'Lmax': 300, 'Nmax': 200},
             ]
 
 

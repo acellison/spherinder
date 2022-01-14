@@ -192,7 +192,6 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
     u, v, w, p, tau, ur, coeffs = expand_evectors(Lmax, Nmax, evector, s, eta, bases, return_coeffs=True)
 
     fields = [u,v,w,p,ur]
-    """
     field_indices = [3,4]
     field_names = ['u','v','w','p','u_r']
 
@@ -201,7 +200,6 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
         print('Tau norm too large - bad solution')
 
     check_boundary = True
-    plot_boundary = False
     if check_boundary:
         z = eta[:,np.newaxis] * np.sqrt(1 - s[np.newaxis,:]**2)
         bc = ur
@@ -209,16 +207,6 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
         bcbot = bc[ 0,:]
         error = [np.max(abs(b)) for b in [bctop, bcbot]]
         print(f'Boundary error: {error}')
-
-        if plot_boundary:
-            fig, ax = plt.subplots()
-            ax.semilogy(s, abs(bctop), label='top')
-            ax.semilogy(s, abs(bcbot), label='bottom')
-            ax.set_xlabel('s')
-            ax.set_title('Radial velocity on the boundary')
-            ax.legend()
-            ax.grid(True)
-            fig.show()
 
     fig, ax = plt.subplots(1,len(field_indices),figsize=(7,4.5))
     for i in range(len(field_indices)):
@@ -232,58 +220,6 @@ def plot_spectrum_callback(index, evalues, evectors, m, Lmax, Nmax, s, eta, base
             ax[i].set_ylabel(None)
 
     fig.suptitle('λ = {:1.4f}'.format(evalue))
-    fig.set_tight_layout(True)
-    fig.show()
-    """
-
-    # Get grid and coefficient data
-    field_index = 3
-    fgrid, fcoeff = fields[field_index], coeffs[field_index]
-
-    fnorm = np.linalg.norm(fcoeff)
-
-    lengths, offsets = sph.coeff_sizes(Lmax, Nmax)
-    pruned = []
-    for ell in range(Lmax):
-        final = offsets[ell]+lengths[ell]
-
-        nprune = 2
-        for n in range(nprune):
-            pruned.append(fcoeff[final-nprune+n])
-        fcoeff[final-nprune:final] = 0
-
-    print(np.shape(pruned))
-    print(f'Pruned norm: {np.linalg.norm(pruned)}, Vector Norm: {fnorm}')
-
-    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha=0, sigma=0)
-    fgrid = bases['p2'].expand(conv @ fcoeff)
-
-    # Compute the Laplacian
-    lap = sph.operator('laplacian')(m, Lmax, Nmax, alpha=0)
-    flap = bases['p2'].expand(lap @ fcoeff)
-
-    # Compute the horizontal Laplacian
-    laph = sao.horizontal_laplacian(m, Lmax, Nmax, alpha=0)
-    flaph = bases['p2'].expand(laph @ fcoeff)
-
-    # Compute the d/dphi**2 part of the Laplacian
-    fphiphi = -1/s**2 * m**2 * fgrid
-
-    solns, names = zip(*[(fgrid, 'p'), (flap, 'Lap(p)'), (flaph, 'HLap(p)'), (fphiphi, 'PhiLap(p)')])
-
-#    sindex = np.argmin(s < 0.7)
-    sindex = len(s)
-
-    # Plot them
-    fig, ax = plt.subplots(1,4, figsize=(15,5))
-    for i in range(4):
-        f = abs(solns[i])
-        sph.plotfield(s[:sindex], eta, f[:,:sindex], fig=fig, ax=ax[i], colorbar=True, stretch=True)
-        ax[i].set_title(r'${}$'.format(names[i]))
-        if i > 0:
-            ax[i].set_yticklabels([])
-            ax[i].set_ylabel(None)
-
     fig.set_tight_layout(True)
     fig.show()
 
@@ -514,7 +450,6 @@ def analyze_resolution(m):
     prefix = filename_prefix(directory='figures')
     filename = prefix + f'-evalue_error-vs-Lmax-m={m}-n={n}-Nmax={Nmax}.png'
     save_figure(filename, fig)
-
 
 
 def _solve_helper(m, Lmax, Nmax, evalue_target):
