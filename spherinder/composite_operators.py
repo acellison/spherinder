@@ -26,64 +26,6 @@ def horizontal_laplacian_squared(m, Lmax, Nmax, alpha, dtype='float64', internal
     return (lap2 @ lap1).astype(dtype)
 
 
-def rescaled_horizontal_laplacian(m, Lmax, Nmax, alpha, epsilon, dtype='float64', internal=internal_dtype):
-    """∇_{\perp}**2 = epsilon**2 * (1/s*ds(s*ds(f)) + 1/s**2 * dphi(dphi(f)))
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+2)
-    """
-    return epsilon**2 * horizontal_laplacian(m, Lmax, Nmax, alpha, dtype=dtype, internal=internal)
-
-
-def rescaled_horizontal_laplacian_squared(m, Lmax, Nmax, alpha, epsilon, dtype='float64', internal=internal_dtype):
-    """∇_{\perp}**2 ∇_{\perp}**2
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+4)
-    """
-    lap1 = rescaled_horizontal_laplacian(m, Lmax, Nmax, alpha,   epsilon, dtype=internal, internal=internal)
-    lap2 = rescaled_horizontal_laplacian(m, Lmax, Nmax, alpha+2, epsilon, dtype=internal, internal=internal)
-    return (lap2 @ lap1).astype(dtype)
-
-
-def anisotropic_horizontal_laplacian(m, Lmax, Nmax, alpha, epsilon, dtype='float64', internal=internal_dtype):
-    """s**2 * ∇_{\perp}**2 = epsilon**2 * s*ds(s*ds(f)) + dphi(dphi(f))
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+2)
-    """
-    sds1 = SdS(m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    sds2 = SdS(m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    laps = sds2 @ sds1
-
-    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha, sigma=0, dtype=internal, internal=internal)
-    lapphi = -m**2 * conv
-
-    op = epsilon**2 * laps + lapphi
-    return op.astype(dtype)
-
-
-def anisotropic_horizontal_laplacian_squared(m, Lmax, Nmax, alpha, epsilon, dtype='float64', internal=internal_dtype):
-    """s**4 ∇_{\perp}**2 ∇_{\perp}**2 = ( s**2 * ∇_{\perp}**2 )**2 f
-                                      + 4 epsilon**2 * dphi(dphi( f - s*ds(f) ))
-                                      + 4 epsilon**4 * s*ds(s*ds( f - s*ds(f) ))
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+4)
-    """
-    lap1 = anisotropic_horizontal_laplacian(m, Lmax, Nmax, alpha,   epsilon, dtype=internal, internal=internal)
-    lap2 = anisotropic_horizontal_laplacian(m, Lmax, Nmax, alpha+2, epsilon, dtype=internal, internal=internal)
-    lap4 = lap2 @ lap1
-
-    conv01 = sph.convert_alpha(1, m, Lmax, Nmax, alpha=alpha,   sigma=0, dtype=internal, internal=internal)
-    conv14 = sph.convert_alpha(3, m, Lmax, Nmax, alpha=alpha+1, sigma=0, dtype=internal, internal=internal)
-    conv34 = sph.convert_alpha(1, m, Lmax, Nmax, alpha=alpha+3, sigma=0, dtype=internal, internal=internal)
-
-    sds0 = SdS(m, Lmax, Nmax, alpha,   dtype=internal, internal=internal)
-    sds1 = SdS(m, Lmax, Nmax, alpha+1, dtype=internal, internal=internal)
-    sds2 = SdS(m, Lmax, Nmax, alpha+2, dtype=internal, internal=internal)
-    onemsds = conv01 - sds0
-
-    comm1 = 4*epsilon**2 * (-m**2) * conv14 @ onemsds
-    comm2 = 4*epsilon**4 * conv34 @ sds2 @ sds1 @ onemsds
-
-    op = lap4 + comm1 + comm2
-
-    return op.astype(dtype)
-
-
 def S_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
     """Multiply a field by s**2 
        Codomain: (Lmax->Lmax, Nmax->Nmax+1, alpha->alpha) if exact

@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import os
 
 import spherinder.operators as sph
-import spherinder.asymptotic_operators as sao
 from fileio import save_figure
 
 
@@ -226,57 +225,6 @@ def conversion_operators():
     save_figure(filename, fig)
 
 
-def psi_equation():
-    epsilon = 1.0
-    codomain = (Lmax, Nmax, alpha+4)
-
-    nplots = 3
-    fig, ax = plt.subplots(1,nplots,figsize=(3*nplots,3))
-    
-    # Converted Horizontal Laplacian sparsity structure
-    lap = sao.rescaled_horizontal_laplacian(m, Lmax, Nmax, alpha, epsilon)
-    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha=alpha+2, sigma=0)
-    Op1 = conv @ lap
-    plot_splatter(r'$\mathcal{I}_{\alpha}^{2} {\nabla}_{\perp}^{2}$', Op1, codomain, ax=ax[0])
-
-    # Anisotropic Horizontal Laplacian Squared sparsity structure
-    operator = sao.rescaled_horizontal_laplacian_squared
-    Op2 = operator(m,Lmax,Nmax,alpha,epsilon)
-    plot_splatter(r'${\nabla}_{\perp}^{4}$', Op2, codomain, ax=ax[1])
-
-    dz = sao.dZ(m,Lmax,Nmax,alpha)
-    conv = sph.convert_alpha(1, m, Lmax, Nmax, alpha=alpha+1, sigma=0)
-    Op3 = conv @ dz
-    plot_splatter(r'$\mathcal{I}_{\alpha} \partial_{z}$', Op3, codomain, ax=ax[2])
-
-
-def w_equation():
-    epsilon = 1.0
-    codomain = (Lmax, Nmax, alpha+4)
-
-    nplots = 3
-    fig, ax = plt.subplots(1,nplots,figsize=(3*nplots,3))
-    
-    # Converted Horizontal Laplacian sparsity structure
-    Op1 = sph.convert_alpha(2, m, Lmax, Nmax, alpha=alpha+2, sigma=0)
-    plot_splatter(r'$\mathcal{I}_{\alpha}^{2}$', Op1, codomain, ax=ax[0])
-
-    # Anisotropic Horizontal Laplacian sparsity structure
-    operator = sao.rescaled_horizontal_laplacian
-    Op2 = operator(m,Lmax,Nmax,alpha+2,epsilon)
-    plot_splatter(r'${\nabla}_{\perp}^{2}$', Op2, codomain, ax=ax[1])
-
-    dz = sao.dZ(m,Lmax,Nmax,alpha)
-    conv = sph.convert_alpha(3, m, Lmax, Nmax, alpha=alpha+1, sigma=0)
-    Op3 = conv @ dz
-    plot_splatter(r'$\mathcal{I}_{\alpha}^{3} \partial_{z}$', Op3, codomain, ax=ax[2])
-
-
-def asymptotic_operators():
-    psi_equation()
-    w_equation()
-
-
 def boundary_operator():
     m, Lmax, Nmax, alpha, sigma = 1, 10, 8, 0, 0
     boundary = sph.Boundary()(m, Lmax, Nmax, alpha, sigma)
@@ -293,7 +241,6 @@ def main():
 #    differential_operators_poster()
     radial_operators()
     conversion_operators()
-    asymptotic_operators()
     boundary_operator()
     plt.show()
 

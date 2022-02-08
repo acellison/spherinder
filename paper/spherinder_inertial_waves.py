@@ -17,8 +17,6 @@ import spherinder.operators as sph
 from spherinder.eigtools import eigsort, scipy_sparse_eigs, plot_spectrum
 from fileio import save_data, save_figure, plotspy
 
-import spherinder.asymptotic_operators as sao
-
 
 g_file_prefix = 'spherinder_inertial_waves'
 use_full_vertical_velocity = False

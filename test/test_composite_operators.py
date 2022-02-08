@@ -1,6 +1,6 @@
 import spherinder.operators as sph
 from spherinder.operators import Basis, plotfield
-import spherinder.asymptotic_operators as sao
+import spherinder.composite_operators as sco
 
 import numpy as np
 from scipy import sparse
@@ -39,7 +39,7 @@ def test_S_squared():
     fgrid = ss**2 * f
     
     # Apply the operator in coefficient space
-    op = sao.S_squared(m, Lmax, Nmax, alpha, exact=True)
+    op = sco.S_squared(m, Lmax, Nmax, alpha, exact=True)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -55,7 +55,7 @@ def test_S_fourth():
     fgrid = ss**4 * f
     
     # Apply the operator in coefficient space
-    op = sao.S_fourth(m, Lmax, Nmax, alpha, exact=True)
+    op = sco.S_fourth(m, Lmax, Nmax, alpha, exact=True)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -72,7 +72,7 @@ def test_Z():
     fgrid = ee * np.sqrt(1-ss**2) * f
     
     # Apply the operator in coefficient space
-    op = sao.Z(m, Lmax, Nmax, alpha, exact=True)
+    op = sco.Z(m, Lmax, Nmax, alpha, exact=True)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -88,7 +88,7 @@ def test_Z_squared():
     fgrid = (ee * np.sqrt(1-ss**2))**2 * f
     
     # Apply the operator in coefficient space
-    op = sao.Z_squared(m, Lmax, Nmax, alpha, exact=True)
+    op = sco.Z_squared(m, Lmax, Nmax, alpha, exact=True)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -111,7 +111,7 @@ def test_SdS():
     fgrid = ss[:,1:-1] * (dfds[1:-1,:] + dfdeta[:,1:-1])
     
     # Apply the operator in coefficient space
-    op = sao.SdS(m, Lmax, Nmax, alpha)
+    op = sco.SdS(m, Lmax, Nmax, alpha)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -133,7 +133,7 @@ def test_dZ():
     fgrid = (1/scale)*(f[2:,:]-f[:-2,:])/(ee[2:,:]-ee[:-2,:])
     
     # Apply the operator in coefficient space
-    op = sao.dZ(m, Lmax, Nmax, alpha)
+    op = sco.dZ(m, Lmax, Nmax, alpha)
     
     # Apply the operator
     d = op @ c.ravel()
@@ -152,7 +152,7 @@ def test_ZdZ():
     fgrid = ee[1:-1,:] * (f[2:,:]-f[:-2,:])/(ee[2:,:]-ee[:-2,:])
     
     # Apply the operator in coefficient space
-    op = sao.ZdZ(m, Lmax, Nmax, alpha)
+    op = sco.ZdZ(m, Lmax, Nmax, alpha)
     
     # Apply the operator
     d = op @ c.ravel()

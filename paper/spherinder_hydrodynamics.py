@@ -12,8 +12,6 @@ import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
 
-import spherinder.asymptotic_operators as sao
-
 
 g_file_prefix = 'spherinder_hydrodynamics'
 
@@ -335,50 +333,6 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev):
     ax.set_title('Spherinder Basis')
     plot_filename = output_filename(m, Lmax, Nmax, boundary_method, Ekman, directory='figures', ext='.png')
     save_figure(plot_filename, fig)
-
-
-def create_laplacian_basis(s, eta, basis):
-    m, Lmax, Nmax, alpha = basis.m, basis.Lmax, basis.Nmax, basis.alpha
-    return sph.Basis(s, eta, m, Lmax, Nmax, sigma=0, alpha=alpha+2, galerkin=False)
-
-
-def make_laplacian_operators(basis):
-    m, Lmax, Nmax, alpha = basis.m, basis.Lmax, basis.Nmax, basis.alpha
-
-    conv = sph.convert_alpha(2, m, Lmax, Nmax, alpha, sigma=0)
-    lapfull = sph.operator('laplacian')(m, Lmax, Nmax, alpha)
-    laph = sao.horizontal_laplacian(m, Lmax, Nmax, alpha)
-    lapz = lapfull - laph
-    operators = {'Mode': conv, 'Horizontal Laplacian': laph, 'Vertical Laplacian': lapz}
-
-    # Flush to zero
-    operators = {key: sph.eliminate_zeros(op, tol=1e-13) for (key, op) in operators.items()}
-    return operators
-
-
-def compute_laplacian_parts(operators, lapbasis, coeffs):
-    results = {key: lapbasis.expand(op @ coeffs) for (key, op) in operators.items()}
-
-    m, s = lapbasis.m, lapbasis.s
-    lapphi = -m**2/s**2 * results['Mode']
-    laps = results.pop('Horizontal Laplacian') - lapphi
-    results['Radial Laplacian'] = laps
-    results['Azimuthal Laplacian'] = lapphi
-
-    return results
-
-
-def boundary_layer_thickness(s, eta, field, decay=0.1, relative=True):
-    if eta[0] < eta[-1]:
-        eta, field = [np.flipud(a) for a in [eta[:,np.newaxis], field]]
-    absfield = abs(field)
-    if relative:
-        maxvals = np.max(absfield, axis=0)
-    else:
-        maxvals = np.max(absfield)
-    field_scaled = absfield / maxvals  # Each column of the field scaled by its max
-    indices = np.argmin(field_scaled <= decay , axis=0)
-    return (1 - eta[indices].ravel()) * np.sqrt(1-s**2)
 
 
 def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
