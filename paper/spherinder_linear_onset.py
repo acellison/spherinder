@@ -153,17 +153,26 @@ def permutation_indices(Lmax, Nmax):
        final set of coefficients so the tau columns are in the same location -
        horizontally block appended to the matrix"""
     nfields = 5
-    nvar = Lmax*Nmax
-    neqn = (Lmax+2)*(Nmax+1)
-    ntau = 2*(Nmax+1)+Lmax
+    nvar = sph.num_coeffs(Lmax, Nmax)
+    neqn = sph.num_coeffs(Lmax+2, Nmax+1)
+    ntau = neqn - nvar
 
-    variables = [range(i*nvar,(i+1)*nvar) for i in range(nfields)]
-    equations = [range(i*neqn,(i+1)*neqn) for i in range(nfields)]
-
-    vartau = range(nfields*nvar,nfields*(nvar+ntau))
-    varindices = [val for tup in zip(*variables) for val in tup]
+    lengths, offsets = sph.coeff_sizes(Lmax, Nmax)
+    varindices = []
+    for ell in range(Lmax):
+        offset, length = offsets[ell], lengths[ell]
+        variables = [list(range(offset+i*nvar, offset+i*nvar+length)) for i in range(nfields)]
+        varindices += np.ravel(variables).tolist()
+    vartau = range(nfields*nvar,nfields*neqn)
     varindices = varindices + list(vartau)
-    eqnindices = [val for tup in zip(*equations) for val in tup]
+
+    lengths, offsets = sph.coeff_sizes(Lmax+2, Nmax+1)
+    eqnindices = []
+    for ell in range(Lmax+2):
+        offset, length = offsets[ell], lengths[ell]
+        equations = [list(range(offset+i*neqn, offset+i*neqn+length)) for i in range(nfields)]
+        eqnindices += np.ravel(equations).tolist()
+
     return varindices, eqnindices
 
 
