@@ -5,12 +5,10 @@ import matplotlib.pyplot as plt
 import os
 import pickle
 
-#from spherinder import config
-#config.default_normalize = False
-
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 from fileio import save_data, save_figure
+from permutation import permutation_indices, invert_permutation
 
 
 g_file_prefix = 'spherinder_hydrodynamics'
@@ -128,34 +126,6 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman):
         raise ValueError('Unsupported boundary method')
 
 
-def permutation_indices(Lmax, Nmax):
-    """For each mode interlace the five field variables.  Returns two lists of 
-       permutation indices, the first for the columns (variable ordering), and
-       the second for the rows (equation sorting).  Leaves tau variables as the
-       final set of coefficients so the tau columns are in the same location -
-       horizontally block appended to the matrix"""
-    nfields = 4
-    nvar = Lmax*Nmax
-    neqn = (Lmax+2)*(Nmax+1)
-    ntau = 2*(Nmax+1)+Lmax
-
-    variables = [range(i*nvar,(i+1)*nvar) for i in range(nfields)]
-    equations = [range(i*neqn,(i+1)*neqn) for i in range(nfields)]
-
-    vartau = range(nfields*nvar,nfields*(nvar+ntau))
-    varindices = [val for tup in zip(*variables) for val in tup]
-    varindices = varindices + list(vartau)
-    eqnindices = [val for tup in zip(*equations) for val in tup]
-    return varindices, eqnindices
-
-
-def invert_permutation(permutation):
-    """Invert a permutation"""
-    inv = np.empty_like(permutation)
-    inv[permutation] = np.arange(len(inv), dtype=inv.dtype)
-    return inv
-
-
 def make_filename_prefix(directory='data'):
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
     abspath = os.path.join(basepath, g_file_prefix)
@@ -177,7 +147,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, eva
 
     if enable_permutation:
         print('Reordering variables and equations...')
-        var, eqn = permutation_indices(Lmax, Nmax)
+        var, eqn = permutation_indices(4, Lmax, Nmax)
         M, L = M[:,var], L[:,var]
         M, L = M[eqn,:], L[eqn,:]       
 

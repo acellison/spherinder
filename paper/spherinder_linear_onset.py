@@ -9,6 +9,7 @@ import multiprocessing as mp
 import spherinder.operators as sph
 from spherinder.eigtools import eigsort, scipy_sparse_eigs, plot_spectrum
 from fileio import save_data, save_figure
+from permutation import permutation_indices, invert_permutation
 
 
 g_alpha_T = 0
@@ -146,43 +147,6 @@ def matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh):
         raise ValueError('Unsupported boundary method')
 
 
-def permutation_indices(Lmax, Nmax):
-    """For each mode interlace the five field variables.  Returns two lists of
-       permutation indices, the first for the columns (variable ordering), and
-       the second for the rows (equation sorting).  Leaves tau variables as the
-       final set of coefficients so the tau columns are in the same location -
-       horizontally block appended to the matrix"""
-    nfields = 5
-    nvar = sph.num_coeffs(Lmax, Nmax)
-    neqn = sph.num_coeffs(Lmax+2, Nmax+1)
-    ntau = neqn - nvar
-
-    lengths, offsets = sph.coeff_sizes(Lmax, Nmax)
-    varindices = []
-    for ell in range(Lmax):
-        offset, length = offsets[ell], lengths[ell]
-        variables = [list(range(offset+i*nvar, offset+i*nvar+length)) for i in range(nfields)]
-        varindices += np.ravel(variables).tolist()
-    vartau = range(nfields*nvar,nfields*neqn)
-    varindices = varindices + list(vartau)
-
-    lengths, offsets = sph.coeff_sizes(Lmax+2, Nmax+1)
-    eqnindices = []
-    for ell in range(Lmax+2):
-        offset, length = offsets[ell], lengths[ell]
-        equations = [list(range(offset+i*neqn, offset+i*neqn+length)) for i in range(nfields)]
-        eqnindices += np.ravel(equations).tolist()
-
-    return varindices, eqnindices
-
-
-def invert_permutation(permutation):
-    """Invert a permutation"""
-    inv = np.empty_like(permutation)
-    inv[permutation] = np.arange(len(inv), dtype=inv.dtype)
-    return inv
-
-
 def make_filename_prefix(directory='data'):
     basepath = os.path.abspath(os.path.join(os.path.dirname(__file__), directory))
     abspath = os.path.join(basepath, g_file_prefix)
@@ -203,7 +167,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
     enable_permutation = permute and boundary_method == 'galerkin'
     if enable_permutation:
         print('Reordering variables and equations...')
-        var, eqn = permutation_indices(Lmax, Nmax)
+        var, eqn = permutation_indices(5, Lmax, Nmax)
         M, L = M[:,var], L[:,var]
         M, L = M[eqn,:], L[eqn,:]
 
