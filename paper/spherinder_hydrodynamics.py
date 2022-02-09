@@ -407,7 +407,7 @@ def main():
 
     m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
 
-    print(f'Linear onset, m = {m}, Ekman = {Ekman:1.4e}')
+    print(f'Damped inertial waves, m = {m}, Ekman = {Ekman:1.4e}')
     print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
     print(f'  Boundary method = {boundary_method}')
     print(f'  Full vertical velocity coefficients = {use_full_vertical_velocity}')

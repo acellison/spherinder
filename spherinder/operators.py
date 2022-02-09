@@ -10,11 +10,31 @@ from .config import internal_dtype, max_processes, default_truncate, default_nor
 
 
 class Basis():
-    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, beta=0, galerkin=False, truncate=default_truncate, normalize=default_normalize,
+    """
+    Spherinder basis element for fixed m.  Constructs the hierarchy of polynomial bases up to
+    maximum vertical degree Lmax and untruncated radial degree Nmax.
+
+    Parameters
+    ----------
+    s : np.ndarray
+        Radial s coordinate values at which to evaluate the basis functions
+    eta : np.ndarray
+        Vertical eta coordinate values at which to evaluate the basis functions
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    sigma : integer, {-1,0,+1}
+        Spin weight for the basis functions
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+
+    """
+    def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, galerkin=False, truncate=default_truncate, normalize=default_normalize,
                  dtype='float64', internal='float128', lazy=True, parallel=False):
         self.s, self.eta = s, eta
         self.m, self.Lmax, self.Nmax = m, Lmax, Nmax
-        self.sigma, self.alpha, self.beta = sigma, alpha, beta
+        self.sigma, self.alpha = sigma, alpha
         self.dtype, self.internal = dtype, internal
         self.galerkin = galerkin
         self.parallel = parallel
@@ -41,22 +61,22 @@ class Basis():
 
     class _Constructor():
         """Helper object to parallelize basis construction"""
-        def __init__(self, Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, normscale, internal, dtype):
-            self.Nsizes, self.m, self.sigma, self.alpha, self.beta = Nsizes, m, sigma, alpha, beta
+        def __init__(self, Nsizes, m, sigma, alpha, t, onept, onemt, truncate, normscale, internal, dtype):
+            self.Nsizes, self.m, self.sigma, self.alpha = Nsizes, m, sigma, alpha
             self.truncate, self.normscale, self.internal, self.dtype = truncate, normscale, internal, dtype
             self.t, self.onept, self.onemt = t, onept, onemt
         def __call__(self, ell):
-            m, sigma, alpha, beta = self.m, self.sigma, self.alpha, self.beta
+            m, sigma, alpha = self.m, self.sigma, self.alpha
             internal, dtype = self.internal, self.dtype
             t, onept, onemt = self.t, self.onept, self.onemt
             N = self.Nsizes[ell]
             scale = self.normscale
-            return scale * ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha-beta+1/2,m+sigma,t,dtype=internal)).astype(dtype)
+            return scale * ((onept * onemt**ell) * Jacobi.polynomials(N,ell+alpha+1/2,m+sigma,t,dtype=internal)).astype(dtype)
 
 
     def _construct_basis(self):
         m, Lmax, Nmax = self.m, self.Lmax, self.Nmax
-        sigma, alpha, beta = self.sigma, self.alpha, self.beta
+        sigma, alpha = self.sigma, self.alpha
         truncate, dtype, internal = self.truncate, self.dtype, self.internal
 
         s, eta = self.s.astype(internal), self.eta.astype(internal)
@@ -73,7 +93,7 @@ class Basis():
         # Construct the s basis
         onept = sscale * (1+t)**((m+sigma)/2)
         onemt = (1-t)**(1/2)
-        fun = Basis._Constructor(self.Nsizes, m, sigma, alpha, beta, t, onept, onemt, truncate, self.norm_scale, internal, dtype)
+        fun = Basis._Constructor(self.Nsizes, m, sigma, alpha, t, onept, onemt, truncate, self.norm_scale, internal, dtype)
         if self.parallel:
             num_processes = min(mp.cpu_count(), max_processes)
             pool = mp.Pool(num_processes)
@@ -537,6 +557,7 @@ class Curl(Operator):
 
 
 class ScalarLaplacian(Operator):
+    """Compute the laplacian of a scaler field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = Codomain(0,0,+2)
@@ -565,6 +586,7 @@ class ScalarLaplacian(Operator):
 
 
 class VectorLaplacian(Operator):
+    """Compute the laplacian of a vector field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = [Codomain(0,0,+2), Codomain(0,0,+2), Codomain(0,0,+2)]
@@ -669,14 +691,6 @@ def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal
         op = resize(op, Lmax, Nmax+ntimes, Lmax, Ntrunc, truncate=False)
     return op.astype(dtype)
     
-
-def convert_beta(m, Lmax, Nmax, alpha, sigma, beta, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-    zop = np.ones(Lmax)
-    A = Jacobi.operator('A', dtype=internal)
-    sop = lambda n,a,b: (A(+1)**beta)(n,a-beta,b)
-    op = make_operator(dell=0, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, truncate=truncate)
-    return op.astype(dtype)
-
 
 def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float64', internal=internal_dtype, truncate=default_truncate):
     """Create the tau projection matrix.  Converts the tau polynomial expressed in the alpha_bc basis
