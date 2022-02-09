@@ -96,6 +96,16 @@ class SuperluColamdTransposed(SparseSolver):
 
 
 def make_solver(matsolver):
+    """
+    Construct a matrix solver object from a string.
+
+    Parameters
+    ----------
+    matsolver : str
+        String identifier of a matrix solver found in the matsolvers dict.
+        If None, returns the default matsolver.
+        If matsolver is instead a SparseSolver, returns it unmodified.
+    """
     if matsolver is None:
         matsolver = 'SuperluNaturalSpsolve'
 
