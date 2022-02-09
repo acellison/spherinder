@@ -4,8 +4,11 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import sympy
 
-import greenspan_inertial_waves as giw
 import spherinder.operators as sph
+
+import sys
+sys.path.append('../paper')
+import greenspan_inertial_waves as giw
 from fileio import save_figure
 
 
