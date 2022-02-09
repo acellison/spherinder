@@ -4,7 +4,28 @@ from scipy import sparse
 
 
 def horizontal_laplacian(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
-    """Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+2)"""
+    """
+    Compute the horizontal Laplacian of a scalar field, i.e. d_{xx} + d_{yy}.
+    Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+2)
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
+    """
     kwargs = {'dtype': internal, 'internal': internal}
     divergence, gradient = sph.Divergence(**kwargs), sph.Gradient(**kwargs)
     num_coeffs = sph.num_coeffs(Lmax, Nmax)
@@ -21,14 +42,58 @@ def horizontal_laplacian(m, Lmax, Nmax, alpha, dtype='float64', internal=interna
 
 
 def horizontal_laplacian_squared(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
+    """
+    Compute the squared horizontal Laplacian of a scalar field, i.e. (d_{xx} + d_{yy})**2.
+    Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+4)
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
+    """
     lap1 = horizontal_laplacian(m, Lmax, Nmax, alpha,   dtype=internal_dtype, internal=internal_dtype)
     lap2 = horizontal_laplacian(m, Lmax, Nmax, alpha+2, dtype=internal_dtype, internal=internal_dtype)
     return (lap2 @ lap1).astype(dtype)
 
 
 def S_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
-    """Multiply a field by s**2 
-       Codomain: (Lmax->Lmax, Nmax->Nmax+1, alpha->alpha) if exact
+    """
+    Multiply a field by S**2 
+    Codomain: (Lmax->Lmax, Nmax->Nmax+1, alpha->alpha) if exact,
+              (Lmax->Lmax, Nmax->Nmax,   alpha->alpha) otherwise
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    exact : bool
+        Flag for exact evaluation if True, otherwise throw away the highest radial modes
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     kwargs = {'dtype': internal, 'internal': internal}
 
@@ -48,8 +113,30 @@ def S_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=inter
 
 
 def S_fourth(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
-    """Multiply a field by s**4
-       Codomain: (Lmax->Lmax, Nmax->Nmax+2, alpha->alpha) if exact
+    """
+    Multiply a field by S**4
+    Codomain: (Lmax->Lmax, Nmax->Nmax+2, alpha->alpha) if exact,
+              (Lmax->Lmax, Nmax->Nmax,   alpha->alpha) otherwise
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    exact : bool
+        Flag for exact evaluation if True, otherwise throw away the highest radial modes
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     s21 = S_squared(m, Lmax, Nmax,   alpha, exact=True, dtype=internal, internal=internal)
     s22 = S_squared(m, Lmax, Nmax+1, alpha, exact=True, dtype=internal, internal=internal)
@@ -62,8 +149,27 @@ def S_fourth(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=intern
 
 
 def SdS(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
-    """s d/ds operator
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+1)
+    """
+    S*d/dS operator
+    Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+1)
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     kwargs = {'dtype': internal, 'internal': internal}
     gradient = sph.Gradient(**kwargs)
@@ -79,8 +185,30 @@ def SdS(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
 
 
 def Z(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
-    """Multiply a field by Z
-       Codomain: (Lmax->Lmax+1, Nmax->Nmax+1, alpha->alpha) if exact
+    """
+    Multiply a field by Z
+    Codomain: (Lmax->Lmax+1, Nmax->Nmax+1, alpha->alpha) if exact,
+              (Lmax->Lmax,   Nmax->Nmax,   alpha->alpha) otherwise
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    exact : bool
+        Flag for exact evaluation if True, otherwise throw away the highest radial modes
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     op = sph.RadialMultiplication()(m, Lmax, Nmax, alpha, exact=True)[2]
 
@@ -91,8 +219,30 @@ def Z(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtyp
 
 
 def Z_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=internal_dtype):
-    """Multiply a field by Z**2
-       Codomain (Lmax->Lmax+2, Nmax->Nmax+1, alpha->alpha) if exact
+    """
+    Multiply a field by Z**2
+    Codomain (Lmax->Lmax+2, Nmax->Nmax+1, alpha->alpha) if exact,
+             (Lmax->Lmax,   Nmax->Nmax,   alpha->alpha) otherwise
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    exact : bool
+        Flag for exact evaluation if True, otherwise throw away the highest radial modes
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     kwargs = {'dtype': internal, 'internal': internal}
     num_coeffs = sph.num_coeffs(Lmax+1, Nmax+1)
@@ -112,8 +262,27 @@ def Z_squared(m, Lmax, Nmax, alpha, exact=False, dtype='float64', internal=inter
 
 
 def ZdZ(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
-    """z d/dz operator
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+1)
+    """
+    Z*d/dZ operator
+    Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+1)
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     kwargs = {'dtype': internal, 'internal': internal}
     num_coeffs = sph.num_coeffs(Lmax, Nmax)
@@ -130,15 +299,43 @@ def ZdZ(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
     return op.astype(dtype)
 
 
-def dZ(m, Lmax, Nmax, alpha, dtype='float64', internal=internal_dtype):
-    """d/dz operator
-       Codomain: (Lmax->Lmax, Nmax->Nmax, alpha->alpha+1)
+def dZ(m, Lmax, Nmax, alpha, minimize_size=False, dtype='float64', internal=internal_dtype):
+    """
+    d/dZ operator
+    Codomain: (Lmax->Lmax-1, Nmax->Nmax, alpha->alpha+1) if minimize_size,
+              (Lmax->Lmax,   Nmax->Nmax, alpha->alpha+1) otherwise
+
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    minimize_size : bool, optional
+        The d/dZ lowers Lmax to Lmax-1.  When minimize_size is True, return
+        the minimal matrix operator, otherwise keep the output size the same
+        as the input.
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+
+    Returns
+    -------
+    operator : scipy.sparse matrix
+        Left-action matrix operator on a vector of coefficients
     """
     kwargs = {'dtype': internal, 'internal': internal}
     num_coeffs = sph.num_coeffs(Lmax, Nmax)
 
     gradient = sph.Gradient(**kwargs)
     op = gradient(m, Lmax, Nmax, alpha)[2]
+
+    if minimize_size:
+        op = sph.resize(op, Lmax, Nmax, Lmax-1, Nmax)
 
     return op.astype(dtype)
 
