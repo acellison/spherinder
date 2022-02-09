@@ -28,6 +28,21 @@ class Basis():
         Spin weight for the basis functions
     alpha : float
         Hierarchy parameter for basis functions.  Must be larger than -1
+    galerkin : bool, optional
+        Flag to use the Galerkin basis in which all functions are multiplied by 1-r**2
+        so that they vanish on the spherical boundary
+    truncate : bool, optional
+        Flag to indicate using the triangular truncated expansion
+    normalize : bool, optional
+        Flag to indicate whether to normalize the basis functions with the s-to-t conversion
+    dtype : np.dtype or str, optional
+        Data type for the output of basis functions
+    internal : np.dtype or str, optional
+        Internal data type for computation
+    lazy : bool, optional
+        Flag to construct the basis functions only as they are requested
+    parallel : bool, optional
+        Flag to construct the basis functions in parallel
 
     """
     def __init__(self, s, eta, m, Lmax, Nmax, sigma=0, alpha=0, galerkin=False, truncate=default_truncate, normalize=default_normalize,
@@ -50,6 +65,7 @@ class Basis():
 
     @property
     def ncoeffs(self):
+        """Total number of coefficients for the given Lmax and Nmax with specified truncation"""
         return num_coeffs(self.Lmax, self.Nmax, truncate=self.truncate)
 
 
@@ -106,6 +122,16 @@ class Basis():
 
 
     def expand(self, coeffs):
+        """
+        Expand a field as a sum of basis functions times coefficients.
+
+        Parameters
+        ----------
+        self : Basis
+            Basis function object
+        coeffs : np.ndarray
+            Array of coefficients of size specified by the Basis construction
+        """
         if not self._constructed:
             self._construct_basis()
 
@@ -128,18 +154,30 @@ class Basis():
 
     @property
     def sbasis(self):
+        """List of array of radial basis functions, one set for each ell"""
         if not self._constructed:
             self._construct_basis()
         return self._sbasis
 
     @property
     def etabasis(self):
+        """Array of vertical basis function, one for each ell"""
         if not self._constructed:
             self._construct_basis()
         return self._etabasis
 
 
     def __getitem__(self, index):
+        """
+        Access a basis function at the specified (ell, k) index
+
+        Parameters
+        ----------
+        self : Basis
+            Basis function object
+        index : tuple of integers
+            (ell, k) index for the desired basis function
+        """
         ell, k = index[0], index[1]
         if ell >= self.Lmax:
             raise ValueError('ell index out of range')
@@ -154,7 +192,29 @@ class Basis():
 
 
 def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
-    """Returns the number of radials coefficients for each vertical degree"""
+    """
+    Returns the number of radials coefficients for each vertical degree
+
+    Parameters
+    ----------
+    Lmax : int
+        Maximum vertical degree
+    Nmax : int
+        Maximum radial degree
+    truncate : bool, optional
+        Flag to specify triangular truncation
+    functor : bool, optional
+        If True, returns a function object that takes the vertical degree
+        ell and returns the number of radial coefficients for that degree.
+        If False, returns a list of radial sizes, one per vertical degree.
+
+    Returns
+    -------
+    radial_sizes : list or function
+        If functor is False, a list of radial coefficient sizes for each ell.
+        If functor is True, a function object that returns the radial coefficient
+        size for an input vertical degree ell.
+    """
     if truncate:
         _check_radial_degree(Lmax, Nmax)
     sizes = [Nmax - (ell//2 if truncate else 0) for ell in range(Lmax)]
@@ -162,35 +222,120 @@ def Nsizes(Lmax, Nmax, truncate=default_truncate, functor=False):
 
 
 def num_coeffs(Lmax, Nmax, truncate=default_truncate):
-    """Return the total number of coefficients for a field"""
+    """
+    Return the total number of coefficients for a field
+
+    Parameters
+    ----------
+    Lmax : int
+        Maximum vertical degree
+    Nmax : int
+        Maximum radial degree
+    truncate : bool, optional
+        Flag to specify triangular truncation
+
+    Returns
+    -------
+    num_coeffs : int
+        Total number of coefficients for specified triangular truncation
+    """
     return sum(Nsizes(Lmax, Nmax, truncate=truncate))
 
 
 def coeff_sizes(Lmax, Nmax, truncate=default_truncate):
-    """Return the number of radial coefficients for each vertical degree,
-       and the offsets for indexing into a coefficient vector for the first
-       radial mode of each vertical degree"""
+    """
+    Return the number of radial coefficients for each vertical degree,
+    and the offsets for indexing into a coefficient vector for the first
+    radial mode of each vertical degree
+
+    Parameters
+    ----------
+    Lmax : int
+        Maximum vertical degree
+    Nmax : int
+        Maximum radial degree
+    truncate : bool, optional
+        Flag to specify triangular truncation
+
+    Returns
+    -------
+    lengths : np.ndarray
+        Array of size Lmax with the number of radial coefficients for each ell
+    offsets : np.ndarray
+        Array of offsets to the radial coefficients for each vertical degree ell
+    """
     lengths = Nsizes(Lmax, Nmax, truncate=truncate)
     offsets = np.append(0, np.cumsum(lengths)[:-1])
     return lengths, offsets
 
 
 def norm_ratio(dalpha, normalize=default_normalize):
-    """Ratio of basis normalization scale factor for a change in alpha"""
+    """
+    Ratio of basis normalization scale factor for a change in alpha
+
+    Parameters
+    ----------
+    dalpha : float
+        Change in alpha from the input parameter to the output parameter
+        for a given operator
+    normalize : bool, optional
+        Flag for s-to-t normalization
+
+    Returns
+    -------
+    ratio : float
+        Normalization ratio
+    """
     return 2**(-dalpha/2) if normalize else 1
 
 
 def _check_radial_degree(Lmax, Nmax):
+    """Check the radial degree is large enough for triangular truncation"""
     if Nmax < Lmax//2:
         raise ValueError('Radial degree too small for triangular truncation')
 
 
 def _hstack(*args, **kwargs):
+    """Wrapper around sparse.hstack to return results in a csr_matrix"""
     return sparse.hstack(*args, **kwargs, format='csr')
 
 
-def make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0, truncate=default_truncate):
-    """Kronecker the operator in the eta and s directions"""
+def _make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0, truncate=default_truncate):
+    """
+    Kronecker the operator in the eta and s directions
+
+    Parameters
+    ----------
+    dell : integer
+        Change in ell from input to output
+    zop : np.ndarray
+        Coefficients for the operator in the eta coordinate
+    sop : dedalus_sphere.jacobi.JacobiOperator
+        Operator object for generating the coefficients of the radial
+        part of spherinder operator.  Takes parameters (n,a,b) corresponding
+        to radial degree n and Jacobi polynomial parameters a,b
+    m : integer
+        Azimuthal wave number
+    Lmax : integer
+        Maximum vertical degree
+    Nmax : integer
+        Maximum radial degree
+    alpha : float
+        Basis function hierarchy parameter, must be larger than -1
+    sigma : float, {-1,0,+1}
+        Basis function spin weight
+    Lpad : integer, optional
+        Change in maximum vertical degree from input to output
+    Npad : integer, optional
+        Change in maximum radial degree from input to output
+    truncate : bool, optional
+        Flag to specify triangular truncation
+
+    Returns
+    -------
+    operator : sparse.csr_matrix
+        Sparse matrix representation of the operator
+    """
     Nin_sizes = Nsizes(Lmax, Nmax, truncate=truncate)
     Nout_sizes = Nsizes(Lmax+Lpad, Nmax+Npad, truncate=truncate)
     Nin_offsets = np.append(0, np.cumsum(Nin_sizes))
@@ -218,6 +363,20 @@ def make_operator(dell, zop, sop, m, Lmax, Nmax, alpha, sigma, Lpad=0, Npad=0, t
 
 
 class Codomain():
+    """
+    Codomain object for the action of operators.  This object encodes
+    the change in vertical degree (dell), radial degree (dn) and hierarchy
+    parameter (dalpha) as a result of applying a given operator.
+
+    Parameters
+    ----------
+    dell : int
+        Change in maximum vertical degree
+    dn : int
+        Change in maximum radial degree
+    dalpha : int
+        Change in hierarchy parameter alpha
+    """
     def __init__(self, dell, dn, dalpha):
         self._arrow = (dell,dn,dalpha)
 
@@ -252,6 +411,23 @@ class Codomain():
 
 
 class Operator():
+    """
+    Base class for representing operators on sets of spherinder basis function.
+    Calling a derived Operator with parameters (m, Lmax, Nmax, alpha, [sigma])
+    builds the operator in sparse matrix form as the left action on a set of 
+    coefficients.
+
+    Parameters
+    ----------
+    codomain : Codmain
+        codomain or list of codomains for the derived operator
+    dtype : string or np.dtype
+        Data type for the output of operator construction
+    internal : string or np.dtype
+        Data type for the computation of operators
+    normalize : bool
+        Flag for triangular truncation
+    """
     def __init__(self, codomain, dtype, internal, truncate, normalize):
         self._codomain = codomain
 
@@ -324,7 +500,7 @@ class Conversion(Operator):
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B = self.A, self.B
         opz = (A(+1) @ B(+1))(Lmax,alpha,alpha)  # (ell,alpha,alpha) -> (ell,alpha+1,alpha+1)
@@ -347,7 +523,7 @@ class RadialComponent(Operator):
 
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
         Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
@@ -377,7 +553,7 @@ class RadialMultiplication(Operator):
     def __call__(self, m, Lmax, Nmax, alpha, exact=False):
         sigma = 0
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, Z, Id = self.A, self.B, self.Z, self.Id
         Lpad, Npad = (1,1) if (not self.truncate or exact) else (0,0)
@@ -406,7 +582,7 @@ class OneMinusRadiusSquared(Operator):
 
     def __call__(self, m, Lmax, Nmax, alpha, sigma, exact=False):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B = self.A, self.B
         Lpad, Npad = (2,1) if (not self.truncate or exact) else (0,0)
@@ -433,7 +609,7 @@ class Gradient(Operator):
     def __call__(self, m, Lmax, Nmax, alpha):
         sigma = 0
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
 
@@ -474,7 +650,7 @@ class Divergence(Operator):
      
     def __call__(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
         Npad = 0 if self.truncate else 1
@@ -514,7 +690,7 @@ class Curl(Operator):
      
     def __call__(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
-            return make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
+            return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
         A, B, C, D, Id = self.A, self.B, self.C, self.D, self.Id
         Lpad, Npad = (0,0) if self.truncate else (1,1)
@@ -557,7 +733,7 @@ class Curl(Operator):
 
 
 class ScalarLaplacian(Operator):
-    """Compute the laplacian of a scaler field"""
+    """Compute the laplacian of a scalar field"""
     def __init__(self, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
         if truncate:
             codomain = Codomain(0,0,+2)
@@ -649,6 +825,31 @@ class VectorLaplacian(Operator):
 
 
 def operator(name, field=None, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize):
+    """
+    Construct an operator of the given name.  This is the standard method for
+    constructing derived Operator objects.
+
+    Parameters
+    ----------
+    name : str
+        String name of the derived Operator
+    field : str
+        Ignored unless constructed the Laplacian operator.  In this case field
+        should be one of ['scalar', 'vector'] to dispatch the appropriate operator
+    dtype : np.dtype or str, optional
+        Data type for the output of operator construction
+    internal : np.dtype or str, optional
+        Internal data type for computation
+    truncate : bool, optional
+        Flag to indicate using the triangular truncated expansion
+    normalize : bool, optional
+        Flag to indicate whether to normalize the basis functions with the s-to-t conversion
+
+    Returns
+    -------
+    operator : Operator
+        Derived Operator object that builds the matrix operator when called
+    """
     dispatch = lambda klass: klass(dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
     if name in ['divergence', 'div']:
@@ -678,6 +879,38 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
 
 
 def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal=internal_dtype, truncate=default_truncate, normalize=default_normalize, exact=True):
+    """
+    Construct the matrix operator converting basis functions form alpha to alpha+ntimes.
+
+    Parameters
+    ----------
+    ntimes : integer
+        Number of times to increment the alpha index
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for basis functions.  Must be larger than -1
+    sigma : integer, {-1,0,+1}
+        Spin weight for the basis functions
+    dtype : np.dtype or str, optional
+        Data type for the output of operator construction
+    internal : np.dtype or str, optional
+        Internal data type for computation
+    truncate : bool, optional
+        Flag to indicate using the triangular truncated expansion
+    normalize : bool, optional
+        Flag to indicate whether to normalize the basis functions with the s-to-t conversion
+    exact : bool, optional
+        Flag for exact conversion.  Only used when truncate is False, otherwise alpha
+        conversion is always exact
+
+    Returns
+    -------
+    operator : sparse.csr_matrix
+        Sparse matrix for alpha conversion
+    """
     ntimes = int(ntimes)
     Conv = operator('conversion', dtype=internal, internal=internal, truncate=truncate, normalize=normalize)
 
@@ -693,8 +926,36 @@ def convert_alpha(ntimes, m, Lmax, Nmax, alpha, sigma, dtype='float64', internal
     
 
 def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float64', internal=internal_dtype, truncate=default_truncate):
-    """Create the tau projection matrix.  Converts the tau polynomial expressed in the alpha_bc basis
-       to the alpha basis."""
+    """
+    Create the tau projection matrix.  Converts the tau polynomial expressed in the alpha_bc basis
+    to the alpha basis.
+
+    Parameters
+    ----------
+    m : integer
+        Azimuthal mode number m
+    Lmax, Nmax : integer
+        Maximum vertical and radial polynomial degrees, respectively
+    alpha : float
+        Hierarchy parameter for output space
+    sigma : integer, {-1,0,+1}
+        Spin weight for the basis functions
+    alpha_bc : float
+        Hierarchy parameter for input space
+    shift : integer
+        Number of additional highest modes for projection
+    dtype : np.dtype or str, optional
+        Data type for the output of operator construction
+    internal : np.dtype or str, optional
+        Internal data type for computation
+    truncate : bool, optional
+        Flag to indicate using the triangular truncated expansion
+
+    Returns
+    -------
+    projection : scipy.sparse matrix
+        Sparse matrix containing tua projection columns
+    """
     # FIXME: shift should just return a single column, not all of them after shift!
     Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
     lengths, offsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
@@ -705,10 +966,28 @@ def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float6
 
 
 def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
-    """Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
-       This appends and deletes rows as necessary without touching the columns.
-       Nin and Nout are functions of ell and return the number of radial coefficients
-       for each vertical degree"""
+    """
+    Reshape the matrix from codomain size (Lin,Nin) to size (Lout,Nout).
+    This appends and deletes rows as necessary without touching the columns.
+    Nin and Nout are functions of ell and return the number of radial coefficients
+    for each vertical degree
+
+    Parameters
+    ----------
+    mat : scipy.sparse matrix
+        Sparse matrix with coefficient size (Lin,Nin)
+    Lin, Nin : integer
+        Maximum vertical and radial input polynomial degrees, respectively
+    Lout, Nout : integer
+        Maximum vertical and radial output polynomial degrees, respectively
+    truncate : bool, optional
+        Flag to indicate using the triangular truncated expansion
+
+    Returns
+    -------
+    resized_matrix : scipy.sparse matrix
+        Input matrix resized to coefficient size (Lout, Nout)
+    """
     if np.isscalar(Nin):
         Nin = Nsizes(Lin, Nin, truncate=truncate, functor=True)
     nintotal = sum([Nin(ell) for ell in range(Lin)])
@@ -759,7 +1038,19 @@ def resize(mat, Lin, Nin, Lout, Nout, truncate=default_truncate):
 
 
 def remove_zero_rows(mat):
-    """Chuck any identically-zero rows from the matrix"""
+    """
+    Chuck any identically-zero rows from the matrix
+
+    Parameters
+    ----------
+    mat : scipy.sparse matrix
+        Sparse matrix
+
+    Returns
+    -------
+    nonzero_matrix : scipy.sparse.csr_matrix
+        Copy of mat with any zero rows thrown out
+    """
     rows, cols = mat.nonzero()
     zrows = list(set(range(np.shape(mat)[0])) - set(rows))
     if not zrows:
@@ -772,7 +1063,21 @@ def remove_zero_rows(mat):
 
 
 def eliminate_zeros(mat, tol=0.):
-    """Prune zeros (or small values when tol is nonzero) from the sparse matrix"""
+    """
+    Prune zeros (or small values when tol is nonzero) from the sparse matrix
+
+    Parameters
+    ----------
+    mat : scipy.sparse matrix
+        Sparse matrix
+    tol : float
+        Value below which matrix entries are flushed to zero
+
+    Returns
+    -------
+    nonzero_matrix : scipy.sparse.csr_matrix
+        Copy of mat with small values set to zero
+    """
     if tol <= 0:
         mat.eliminate_zeros()
         return mat
@@ -783,7 +1088,43 @@ def eliminate_zeros(mat, tol=0.):
 
 
 def plotfield(s, eta, f, fig=None, ax=None, stretch=False, arcsin=False, aspect='equal', colorbar=True, cmap='RdBu', cbar_format=None, shading=None):
-    """Plot a 2D slice of the field at phi = 0"""
+    """
+    Plot a 2D slice of the field at phi = 0
+
+    Parameters
+    ----------
+    s : np.ndarray
+        Radial coordinate to plot.  Second dimension of f
+    eta : np.ndarray
+        Vertical coordinate to plot.  First dimenson of f
+    f : np.ndarray
+        2D array containing values for the field at eta,s
+    fig : matplotlib.pyplot.Figure, optional
+        Figure object to add plot
+    ax : matplotlib.pyplot.Axes, optional
+        Axes object to add plot
+    stretch : bool, optional
+        Flag to stretch the sphere into a cylinder shape,
+        plotting in coordinates (s,eta) if True, otherwise (s,z).
+    arcsin : bool, optional
+        Flag to plot the field in the λ = arcsin(s) coordinate
+    aspect : str, optional
+        Aspect parameter for the Axes object
+    colorbar : bool, optional
+        If True, plot a colorbar alongside the axes
+    cmap : str, optional
+        Colormap identifier for plotting
+    cbar_format : str, optional
+        If 'log', print the colorbar labels in powers of 10
+    shading : str, optional
+        Shading style for matplotlib.pyplot.pcolormesh.
+        Defaults to 'auto' for rectilinear coordinates, otherwise 'gouraud'.
+
+    Returns
+    -------
+    fig, ax : matplotlib.pyplot Figure and Axes objects
+        Figure and Axes with the plotted field
+    """
     ss, ee = s.ravel()[np.newaxis,:], eta.ravel()[:,np.newaxis]
     y = ee if stretch else np.sqrt(1-ss**2)*ee
     if shading is None:
