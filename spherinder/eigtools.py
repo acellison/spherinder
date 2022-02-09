@@ -10,6 +10,29 @@ from . import matsolvers
 
 
 def eigsort(A, B, profile=False, overwrite=False, cutoff=np.inf):
+    """
+    Compute the generalized eigenvalues for the system A.x = λ B.x,
+    returning them sorted by real part.
+
+    Parameters
+    ----------
+    A, B : numpy matrices
+        Dense matrices for generalized eigenvalue problem
+    profile : bool, optional
+        Flag to time the eigenvalue computation
+    overwrite : bool, optional
+        Flag to perform computations in place in the B argument.
+        May be a performance benefit but destroys the input array
+    cutoff : float, optional
+        Eigenvalues with larger modulus than the cutoff are thrown out
+
+    Returns
+    -------
+    eigenvalues : np.ndarray
+        Array with sorted eigenvalues
+    eigenvectors : np.matrix
+        Matrix with columns the generalized eigenvectors, sorted as eigenvalues
+    """
     if profile:
         print("Starting eigenvalue computation...")
         evals_start = time.time()
@@ -49,6 +72,8 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
         Target σ for eigenvalue search
     matsolver : matrix solver class
         Class implementing solve method for solving sparse systems.
+    profile : bool, optional
+        Flag to time the eigenvalue computation
 
     Other keyword options passed to scipy.sparse.linalg.eigs.
     """
@@ -80,7 +105,36 @@ def scipy_sparse_eigs(A, B, N, target, matsolver=None, profile=False):
 
 
 def track_eigenpair(A, B, lam, v, matsolver=None, tol=1e-14, maxiter=10, verbose=False, profile=False):
-    """Find a generalized eigenpair given initial guess (lam, v)
+    """
+    Find a generalized eigenpair for the system A.x = λ B.x given initial guess
+    (lam, v).  The routine uses Newton updates on the initial guess to refine
+    the eigenpair.
+
+    Parameters
+    ----------
+    A, B : scipy sparse matrices
+        Sparse matrices for generalized eigenvalue problem
+    lam : complex
+        Initial eigenvalue guess
+    vec : np.ndarray
+        Initial eigenvector guess
+    matsolver : str or matrix solver class, optional
+        Matrix solver used to solve systems of the form A.x = b
+    tol : float, optional
+        Tolerance in 2-norm for the residual vector to stop iteration
+    maxiter : int, optional
+        Maximum number of iterations
+    verbose : bool, optional
+        Flag to print convergence messages each iteration
+    profile : bool, optional
+        Flag to time the eigenvalue computation
+
+    Returns
+    -------
+    eigenvalue : complex
+        Refined eigenvalue
+    eigenvector : np.array
+        Refined eigenvector
     """
     shape = np.shape(v)
     n = np.prod(shape)
@@ -134,6 +188,25 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
     """
     Solves the linear eigenvalue problem for two different resolutions.
     Returns trustworthy eigenvalues using nearest delta, from Boyd chapter 7.
+
+    Parameters
+    ----------
+    evalues : np.ndarray
+        Eigenvalues from the low resolution solution
+    evalues_hires : np.ndarray
+        Eigenvalues from the high resolution solution
+    cutoff : float, optional
+        Cutoff for testing whether an eigenvalue is resolved.
+        Larger values are more restrictive
+    plot : bool, optional
+        Flag to plot the two sets of eigenvalues
+
+    Returns
+    -------
+    good_eigenvalues : np.ndarray
+        Array of well-resolved eigenvalues
+    indices : np.ndarray
+        Indices of the resolved eigenvalues in the low resolution evalues array
     """
     lambda1 = evalues
     lambda2 = evalues_hires
@@ -182,6 +255,25 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
 
 
 def plot_spectrum(evalues, onpick=None, *args, **kwargs):
+    """
+    Standard eigenvalue plotting routine with an optional callback when
+    an eigenvalue is selected.  This enables plotting the associated
+    eigenvector with a custom routine.
+
+    Parameters
+    ----------
+    evalues : numpy.ndarray
+        Array of (possibly complex) eigenvalues
+    onpick : function(int)
+        Function called when an eigenvalue is selected.  The corresponding
+        index is passed to the routine for further analysis.
+
+    Other arguments and keyword options passed to matplotlib.pyplot.Axes.plot
+
+    Returns
+    -------
+    fig, ax : matplotlib.pyplot Figure and Axes objects
+    """
     def onpick_callback(event):
         thisline = event.artist
         xdata = thisline.get_xdata()
