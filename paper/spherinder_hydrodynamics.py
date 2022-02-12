@@ -13,7 +13,6 @@ from permutation import permutation_indices, invert_permutation
 
 g_file_prefix = 'spherinder_hydrodynamics'
 
-
 use_full_vertical_velocity = False
 
 def vertical_velocity_size(Lmax, Nmax, full=use_full_vertical_velocity):
@@ -142,14 +141,16 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, eva
     print('Constructing matrix system...')
     M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman)
 
-    permute = False  # FIXME: sort out permutation for truncated series
-    enable_permutation = permute and boundary_method == 'galerkin'
+    enable_permutation = boundary_method == 'galerkin'
 
     if enable_permutation:
         print('Reordering variables and equations...')
-        var, eqn = permutation_indices(4, Lmax, Nmax)
+        pre_permute_shape = np.shape(L)
+        Lw, Nw = vertical_velocity_size(Lmax, Nmax)
+        var, eqn = permutation_indices((Lmax,Lmax,Lw,Lmax), (Nmax,Nmax,Nw,Nmax), galerkin=True, nfields=4)
         M, L = M[:,var], L[:,var]
         M, L = M[eqn,:], L[eqn,:]       
+        assert np.shape(L) == pre_permute_shape
 
     if plot_spy:
         fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
@@ -399,13 +400,14 @@ def plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev):
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
 
     print(f'Damped inertial waves, m = {m}, Ekman = {Ekman:1.4e}')
     print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')

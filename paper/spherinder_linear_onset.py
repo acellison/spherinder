@@ -163,13 +163,14 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh,
     print('Constructing matrix system...')
     M, L = matrices(m, Lmax, Nmax, boundary_method, Ekman, Prandtl, Rayleigh)
 
-    permute = False  # Fixme: implement permutation for triangular truncation
-    enable_permutation = permute and boundary_method == 'galerkin'
+    enable_permutation = boundary_method == 'galerkin'
     if enable_permutation:
         print('Reordering variables and equations...')
-        var, eqn = permutation_indices(5, Lmax, Nmax)
+        pre_permute_shape = np.shape(L)
+        var, eqn = permutation_indices(Lmax, Nmax, galerkin=True, nfields=5)
         M, L = M[:,var], L[:,var]
         M, L = M[eqn,:], L[eqn,:]
+        assert np.shape(L) == pre_permute_shape
 
     if plot_spy:
         fig, plot_axes = plt.subplots(1,2,figsize=(9,4))
@@ -511,16 +512,16 @@ def plot_critical_modes():
 
 
 def main():
-    solve = False
+    solve = True
     plot_spy = False
     plot_evalues = True
     plot_fields = True
     boundary_method = 'galerkin'
 #    nev = 'all'
-    nev = 10 
+    nev = 3
     resolution_scale = 1.0
 
-    config_index = 2
+    config_index = -1
     config = rotation_configs()[config_index]
 
     m, Ekman, Prandtl, Rayleigh, omega = config['m'], config['Ekman'], 1, config['Rayleigh'], config['omega']
@@ -546,7 +547,6 @@ def main():
 
 
 if __name__=='__main__':
-#    main()
-#    solve()
-    plot_critical_modes()
+    main()
+#    plot_critical_modes()
 
