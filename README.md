@@ -8,6 +8,9 @@ If using conda (recommended), activate the dedalus environemnt.
 Next download the source for dedalus sphere and follow its installation instructions:
     https://github.com/DedalusProject/dedalus_sphere
 
+Our preferred sparse eigensolver for Spherinder problems is the scikits umfpack solver.
+In the conda environment run "conda install -c conda-forge scikit-umfpack" to install it.
+
 To install the spherinder python package, run the command "pip install -e ."
 This will create an editable installation of the scripts inside "spherinder"
 in an importable module called "spherinder".
