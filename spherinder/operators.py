@@ -446,6 +446,9 @@ class Operator():
         self.Z = Jacobi.operator('Z', dtype=internal)
         self.Id = Jacobi.operator('Id', dtype=internal)
 
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
+
     @property
     def codomain(self):
         return self._codomain
@@ -460,7 +463,7 @@ class Boundary(Operator):
         L = Lmax-1
         return (Nmax+L//2, L//2+alpha+1/2, m+sigma), (Nmax+(L-1)//2, (L+1)//2+alpha+1/2, m+sigma)
 
-    def __call__(self, m, Lmax, Nmax, alpha, sigma, separate=False):
+    def call(self, m, Lmax, Nmax, alpha, sigma, separate=False):
         if self.truncate:
             _check_radial_degree(Lmax, Nmax)
         A = self.A
@@ -498,7 +501,7 @@ class Conversion(Operator):
             codomain = Codomain(0,+1,+1)
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha, sigma):
+    def call(self, m, Lmax, Nmax, alpha, sigma):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
@@ -521,7 +524,7 @@ class RadialComponent(Operator):
         codomain = [Codomain(0,+1,0), Codomain(0,0,0), Codomain(+1,+1,0)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha, exact=False):
+    def call(self, m, Lmax, Nmax, alpha, exact=False):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
@@ -550,7 +553,7 @@ class RadialMultiplication(Operator):
         codomain = [Codomain(0,0,0), Codomain(0,+1,0), Codomain(+1,+1,0)] 
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha, exact=False):
+    def call(self, m, Lmax, Nmax, alpha, exact=False):
         sigma = 0
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
@@ -580,7 +583,7 @@ class OneMinusRadiusSquared(Operator):
         codomain = Codomain(+2,+1,-1)
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha, sigma, exact=False):
+    def call(self, m, Lmax, Nmax, alpha, sigma, exact=False):
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
@@ -606,7 +609,7 @@ class Gradient(Operator):
             codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(-1,0,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def call(self, m, Lmax, Nmax, alpha):
         sigma = 0
         def make_op(dell, zop, sop, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
@@ -648,7 +651,7 @@ class Divergence(Operator):
             codomain = [Codomain(0,+1,+1), Codomain(0,0,+1), Codomain(-1,0,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
      
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def call(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
@@ -688,7 +691,7 @@ class Curl(Operator):
             codomain = [Codomain(0,0,+1), Codomain(0,+1,+1), Codomain(0,+1,+1)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
      
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def call(self, m, Lmax, Nmax, alpha):
         def make_op(dell, zop, sop, sigma, Lpad=0, Npad=0):
             return _make_operator(dell=dell, zop=zop, sop=sop, m=m, Lmax=Lmax, Nmax=Nmax, alpha=alpha, sigma=sigma, Lpad=Lpad, Npad=Npad, truncate=self.truncate)
 
@@ -741,7 +744,7 @@ class ScalarLaplacian(Operator):
             codomain = Codomain(0,+1,+2)
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def call(self, m, Lmax, Nmax, alpha):
         kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate, 'normalize':self.normalize}
         divergence, gradient = Divergence(**kwargs), Gradient(**kwargs)
 
@@ -770,7 +773,7 @@ class VectorLaplacian(Operator):
             codomain = [Codomain(0,+1,+2), Codomain(0,+1,+2), Codomain(0,+1,+2)]
         Operator.__init__(self, codomain=codomain, dtype=dtype, internal=internal, truncate=truncate, normalize=normalize)
 
-    def __call__(self, m, Lmax, Nmax, alpha):
+    def call(self, m, Lmax, Nmax, alpha):
         kwargs = {'dtype':self.internal, 'internal':self.internal, 'truncate':self.truncate, 'normalize':self.normalize}
         divergence, gradient, curl = Divergence(**kwargs), Gradient(**kwargs), Curl(**kwargs)
 
