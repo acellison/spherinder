@@ -287,7 +287,7 @@ def plot_solution(B, m, domain, Ekman, boundary_condition):
 
 
 def main():
-    solve = False
+    solve = True
     plot = True
 
     # Create the domain
