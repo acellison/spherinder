@@ -376,6 +376,7 @@ class Codomain():
         Change in maximum radial degree
     dalpha : int
         Change in hierarchy parameter alpha
+
     """
     def __init__(self, dell, dn, dalpha):
         self._arrow = (dell,dn,dalpha)
@@ -427,6 +428,7 @@ class Operator():
         Data type for the computation of operators
     normalize : bool
         Flag for triangular truncation
+
     """
     def __init__(self, codomain, dtype, internal, truncate, normalize):
         self._codomain = codomain
@@ -835,7 +837,8 @@ def operator(name, field=None, dtype='float64', internal=internal_dtype, truncat
     Parameters
     ----------
     name : str
-        String name of the derived Operator
+        String name of the derived Operator.
+        One of ['gradient', 'divergence', 'curl', 'laplacian', 'rtimes', '1-r**2', 'boundary', 'conversion']
     field : str
         Ignored unless constructed the Laplacian operator.  In this case field
         should be one of ['scalar', 'vector'] to dispatch the appropriate operator
@@ -959,7 +962,6 @@ def tau_projection(m, Lmax, Nmax, alpha, sigma, alpha_bc, shift=0, dtype='float6
     projection : scipy.sparse matrix
         Sparse matrix containing tua projection columns
     """
-    # FIXME: shift should just return a single column, not all of them after shift!
     Conv = convert_alpha(alpha-alpha_bc, m, Lmax, Nmax, alpha=alpha_bc, sigma=sigma, dtype=dtype, internal=internal, truncate=truncate)
     lengths, offsets = coeff_sizes(Lmax, Nmax, truncate=truncate)
     indices = offsets+lengths-1
