@@ -65,7 +65,9 @@ def plot_fields(fielddict, z, cos_theta, colorbar=True, fig=None, ax=None, cmap=
     r, cos_theta = r[np.newaxis,:], cos_theta[:,np.newaxis]
     sin_theta = np.sqrt(1-cos_theta**2)
     x, z = r*sin_theta, r*cos_theta
+    x, z = [a.astype('float64') for a in [x,z]]
     for name, field in fielddict.items():
+        field = field.astype('float64')
         if fig is None or ax is None:
             fig, ax = plt.subplots(1,1,figsize=(4.25,6))
 
