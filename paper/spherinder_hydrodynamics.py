@@ -163,7 +163,7 @@ def solve_eigenproblem(m, Lmax, Nmax, boundary_method, Ekman, plot_spy, nev, eva
     if nev == 'all':
         evalues, evectors = eigsort(L.todense(), M.todense(), profile=True)
     else:
-        matsolver = 'UmfpackFactorized64'
+        matsolver = 'SuperluColamdFactorized'
         evalues, evectors = scipy_sparse_eigs(L, M, N=nev, target=evalue_target, matsolver=matsolver, profile=True)
 
     if enable_permutation:
@@ -294,7 +294,8 @@ def plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev):
     ns, neta = 256, 255
     s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
     bases = create_bases(m, Lmax, Nmax, boundary_method, s, eta)
-    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=1024, nphi=512)
+#    equatorial_bases = create_equatorial_bases(m, Lmax, Nmax, boundary_method, ns=1024, nphi=512)
+    equatorial_bases = None
     onpick = lambda index: plot_spectrum_callback(index, evalues, evectors, Lmax, Nmax, s, eta, bases, equatorial_bases)
 
     # Eigenvalue plot
@@ -406,8 +407,9 @@ def main():
     plot_fields = True
     boundary_method = 'galerkin'
 
-#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 160, 240, 2400, -0.0070738+0.060679j
-    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j
+    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 1000, -0.0070738+0.060679j  # Leat damped
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 100, -0.0070738+0.060679j  # Least damped, fewer modes
+#    m, Ekman, Lmax, Nmax, nev, evalue_target = 30, 10**-6, 80, 240, 100, -0.12  # Highly radially oscillatory
 
     print(f'Damped inertial waves, m = {m}, Ekman = {Ekman:1.4e}')
     print(f'  Domain size: Lmax = {Lmax}, Nmax = {Nmax}')
@@ -419,7 +421,7 @@ def main():
 
     if plot_fields or plot_evalues:
         plot_solution(m, Lmax, Nmax, boundary_method, Ekman, plot_fields, nev=nev)
-        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev=nev)
+#        plot_gravest_modes(m, Lmax, Nmax, boundary_method, Ekman, nev=nev)
         plt.show()
 
 

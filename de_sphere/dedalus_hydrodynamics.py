@@ -17,6 +17,8 @@ from utilities import save_data, save_figure
 
 from spherinder.eigtools import eigsort, plot_spectrum, scipy_sparse_eigs
 
+from gyropoly.decorators import profile
+
 
 g_file_prefix = 'dedalus_hydrodynamics'
 automatic_boundary_conditions = False
@@ -158,6 +160,7 @@ def ell_matrices(B, N, ell, Ekman, alpha_BC, bc_type):
     return M, L, None
 
 
+@profile
 def build_matrices(B, state_vector, m, Ekman, alpha_BC, bc_type):
     ell_range = range(m, B.L_max+1)
     Mmats, Lmats, Qmats = [], [], []
@@ -291,8 +294,9 @@ def main():
     plot = True
 
     # Create the domain
-#    m, Ekman, L_max, N_max, nev, evalue_target = 14, 1e-5, 40, 40, 'all', None
-    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 280, 146, 1000, -0.0070738+0.060679j
+    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 280, 146, 1000, -0.0070738+0.060679j  # Least damped
+#    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 280, 146, 100, -0.0070738+0.060679j   # Least damped, fewer modes
+#    m, Ekman, L_max, N_max, nev, evalue_target = 30, 1e-6, 390, 196, 100, -0.12  # Highly radially oscillatory, higher resolution
 
     # boundary_condition = 'stress-free'
     boundary_condition = 'no-slip'
