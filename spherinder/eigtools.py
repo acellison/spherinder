@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.linalg import eig
 from scipy import sparse
 import scipy.sparse.linalg as spla
-import dedalus.tools.sparse as dts
+import dedalus.tools.array as dts
 
 from . import matsolvers
 

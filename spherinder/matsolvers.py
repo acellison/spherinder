@@ -1,7 +1,7 @@
 import numpy as np
 from scipy import sparse
 import scipy.sparse.linalg as spla
-import dedalus.public as de
+from dedalus.libraries import matsolvers as de_matsolvers
 
 """
 Dedalus-provided solvers:
@@ -13,7 +13,7 @@ Solvers defined in this module:
     ['LSQR_solve', 'UmfpackSpsolve64', 'UmfpackFactorized64', 
      'SuperluNaturalTransposed', 'SuperluColamdTransposed']
 """
-matsolvers = de.matsolvers.matsolvers
+matsolvers = de_matsolvers.matsolvers
 
 
 def _to_int64(x, copy=True):
@@ -26,10 +26,10 @@ def _to_int64(x, copy=True):
     return y
 
 
-SparseSolver = de.matsolvers.SparseSolver
+SparseSolver = de_matsolvers.SparseSolver
 
 # Add the LSQR solver to the dedalus matsolvers module
-@de.matsolvers.add_solver
+@de_matsolvers.add_solver
 class LSQR_solve(SparseSolver):
     """LSQR solve."""
 
@@ -43,7 +43,7 @@ class LSQR_solve(SparseSolver):
         return np.reshape(solution[0], (np.shape(self.matrix)[1], 1))
 
 
-@de.matsolvers.add_solver
+@de_matsolvers.add_solver
 class UmfpackSpsolve64(SparseSolver):
     """UMFPACK spsolve, 64 bit indices."""
 
@@ -55,7 +55,7 @@ class UmfpackSpsolve64(SparseSolver):
         return spla.spsolve(self.matrix, vector, use_umfpack=True)
 
 
-@de.matsolvers.add_solver
+@de_matsolvers.add_solver
 class UmfpackFactorized64(SparseSolver):
     """UMFPACK LU factorized solve, 64 bit indices."""
 
@@ -67,7 +67,7 @@ class UmfpackFactorized64(SparseSolver):
         return self.LU(vector)
 
 
-@de.matsolvers.add_solver
+@de_matsolvers.add_solver
 class SuperluNaturalTransposed(SparseSolver):
     """Super LU natural factorized transposed solve."""
 
@@ -81,7 +81,7 @@ class SuperluNaturalTransposed(SparseSolver):
         return x[self.perm_r]
 
 
-@de.matsolvers.add_solver
+@de_matsolvers.add_solver
 class SuperluColamdTransposed(SparseSolver):
     """Super LU colamd factorized transposed solve."""
 

@@ -2,6 +2,6 @@
 from setuptools import setup
 
 setup(
-    name='spherinder',
+    packages=['spherinder'],
     version='0.1'
 )
