@@ -402,8 +402,9 @@ def plot_critical_modes():
     figsize = scale*figsize[0]*0.95, scale*figsize[1]
     fig_eq, plot_axes_eq = plt.subplots(nrows, ncols, figsize=figsize)
 
-    ns, neta = 256, 255
-    s, eta = np.linspace(0,1,ns+1)[1:], np.linspace(-1,1,neta)
+    ns, neta = 1024, 1025
+    lam = np.linspace(0,np.pi/2,ns+1)
+    s, eta = np.sin(lam)[1:], np.linspace(-1,1,neta)
 
     t, t_eq = np.linspace(0,np.pi,100), np.linspace(0,2*np.pi,200)
     radius = 0.35
@@ -444,9 +445,6 @@ def plot_critical_modes():
         cmap = 'RdBu_r' if field == 'T' else 'RdBu'
         sph.plotfield(s, eta, f, fig=fig, ax=ax, cmap=cmap, colorbar=False)
 
-        if nplots != 1:
-            ax.plot(circle_x, circle_y, '--k', alpha=0.8, linewidth=1)
-
         ax.set_yticks(np.linspace(-1,1,5))
         if col > 0:
             ax.set_ylabel('')
@@ -476,8 +474,6 @@ def plot_critical_modes():
         ax.plot(np.cos(phi_eq), np.sin(phi_eq), color='k', linewidth=0.5, alpha=0.5)
         ax.set_aspect(aspect='equal', adjustable='datalim')
         ax.set_title(title_eq)
-        if nplots != 1:
-            ax.plot(circle_x_eq, circle_y_eq, '--k', alpha=0.8, linewidth=1)
         ax.set_xlabel('x')
         ax.set_ylabel('y')
 
@@ -502,7 +498,7 @@ def plot_critical_modes():
         name = f's-field={field}'
     fig.set_tight_layout(True)
     filename = make_filename_prefix('figures') + f'-critical_mode{name}.png'
-    save_figure(filename, fig)
+    save_figure(filename, fig, dpi=600)
 
     fig_eq.set_tight_layout(True)
     filename = make_filename_prefix('figures') + f'-critical_mode{name}-equatorial.png'
@@ -547,6 +543,6 @@ def main():
 
 
 if __name__=='__main__':
-    main()
-#    plot_critical_modes()
+#    main()
+    plot_critical_modes()
 
