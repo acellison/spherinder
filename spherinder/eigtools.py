@@ -254,7 +254,7 @@ def discard_spurious_eigenvalues(evalues, evalues_hires, cutoff=1e6, plot=False)
     return goodevals, indices
 
 
-def plot_spectrum(evalues, onpick=None, *args, **kwargs):
+def plot_spectrum(evalues, onpick=None, figax=None, *args, **kwargs):
     """
     Standard eigenvalue plotting routine with an optional callback when
     an eigenvalue is selected.  This enables plotting the associated
@@ -288,7 +288,10 @@ def plot_spectrum(evalues, onpick=None, *args, **kwargs):
             onpick(index)
         return True
 
-    fig, ax = plt.subplots()
+    if figax is None:
+        fig, ax = plt.subplots()
+    else:
+        fig, ax = figax
     ax.plot(evalues.real, evalues.imag, '.', markersize=2, picker=True, pickradius=5, *args, **kwargs)
     ax.set_xlabel('Real(λ)')
     ax.set_ylabel('Imag(λ)')
